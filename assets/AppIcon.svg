@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="128" y1="112" x2="896" y2="912" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#101a3d"/>
+      <stop offset="0.52" stop-color="#293884"/>
+      <stop offset="1" stop-color="#6743a8"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="352" y1="251" x2="684" y2="773" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e9ebf5"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="626" y1="260" x2="718" y2="354" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d8dced"/>
+      <stop offset="1" stop-color="#f8f8fd"/>
+    </linearGradient>
+    <linearGradient id="cursor" x1="0" y1="402" x2="0" y2="624" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#74f4ff"/>
+      <stop offset="1" stop-color="#20c7ef"/>
+    </linearGradient>
+    <filter id="outerShadow" x="-15%" y="-15%" width="130%" height="145%">
+      <feDropShadow dx="0" dy="28" stdDeviation="34" flood-color="#090b22" flood-opacity="0.45"/>
+    </filter>
+    <filter id="paperShadow" x="-25%" y="-20%" width="150%" height="160%">
+      <feDropShadow dx="0" dy="24" stdDeviation="25" flood-color="#101334" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+
+  <rect x="72" y="72" width="880" height="880" rx="210" fill="url(#background)" filter="url(#outerShadow)"/>
+  <path d="M128 416C204 212 394 112 614 127C763 137 867 214 927 318V210C927 134 890 97 814 97H210C134 97 97 134 97 210V815C97 891 134 928 210 928H313C179 820 80 650 128 416Z" fill="#6178db" opacity="0.10"/>
+  <path d="M735 890C831 826 898 729 927 618V814C927 890 890 927 814 927H610C656 919 697 906 735 890Z" fill="#a268df" opacity="0.18"/>
+
+  <g transform="translate(29 0)">
+    <g filter="url(#paperShadow)">
+      <path d="M319 238H612L720 346V778C720 818 688 850 648 850H319C279 850 247 818 247 778V310C247 270 279 238 319 238Z" fill="url(#paper)"/>
+      <path d="M612 238V318C612 334 625 347 641 347H720L612 238Z" fill="url(#fold)"/>
+      <path d="M612 238V318C612 334 625 347 641 347H720" fill="none" stroke="#c4c9df" stroke-width="9" stroke-linejoin="round" opacity="0.85"/>
+      <path d="M319 238H612L720 346V778C720 818 688 850 648 850H319C279 850 247 818 247 778V310C247 270 279 238 319 238Z" fill="none" stroke="#ffffff" stroke-opacity="0.52" stroke-width="8"/>
+    </g>
+
+    <path d="M425 389C373 389 350 412 350 461V481C350 510 338 522 315 525V545C338 548 350 560 350 589V609C350 658 373 681 425 681" fill="none" stroke="#354277" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M549 389C601 389 624 412 624 461V481C624 510 636 522 659 525V545C636 548 624 560 624 589V609C624 658 601 681 549 681" fill="none" stroke="#354277" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="475" y="399" width="25" height="252" rx="12.5" fill="url(#cursor)"/>
+  </g>
+</svg>

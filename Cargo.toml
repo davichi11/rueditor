@@ -1,11 +1,19 @@
 [package]
-name = "gpui-test"
+name = "rueditor"
 version = "0.1.0"
 edition = "2024"
+default-run = "rueditor"
+description = "A lightweight native text editor built with GPUI Kit"
 
 [dependencies]
-gpui-kit = "0.6.1"
+tempfile = "3.27"
+gpui-kit = { version = "0.6.1", features = ["tree-sitter-rust", "tree-sitter-python"] }
+jsonrepair = "0.1.0"
+serde_json = "1"
+
+[dev-dependencies]
+gpui-kit = { version = "0.6.1", features = ["test-support"] }
 
 [[bin]]
-name = "text-editor"
-path = "src/bin/text-editor.rs"
+name = "rueditor"
+path = "src/bin/rueditor.rs"

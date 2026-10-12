@@ -1,1 +1,46 @@
 /target
+/dist
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**
+!**/src/test/**
+/docs
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+
+### VS Code ###
+.vscode/
+
+rebel.xml
+*.log
+
+# 忽略 docker 构建时的 jar 文件
+docker/app.jar
+
+### node ###
+node_modules/
+
+*.DS_Store
+
+.sdkmanrc
