@@ -7,6 +7,7 @@ use gpui_kit::component::{
     ActiveTheme, Disableable, Root, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::{Editor, EditorState, InputEvent},
+    menu::DropdownMenu,
     status_bar::StatusBar,
     tab::{Tab, TabBar},
 };
@@ -14,7 +15,10 @@ use gpui_kit::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use editor::{Close, Format, New, Open, Save, SaveAs};
+use editor::{
+    Close, Format, New, Open, Save, SaveAs, SetCss, SetHtml, SetJavaScript, SetJson, SetMarkdown,
+    SetPlaintext, SetPython, SetRust, SetToml, SetTypeScript, SetYaml, ToggleFolding,
+};
 
 #[derive(Clone, Copy)]
 enum AfterSave {
@@ -83,6 +87,7 @@ impl Workspace {
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language(language)
+                .folding(true)
                 .default_value(text)
         });
         let observed_id = id;
@@ -124,6 +129,8 @@ impl Workspace {
             path,
             title: title.into(),
             editor,
+            language: language.into(),
+            folding_enabled: true,
             encoding,
             newline,
             revision: 0,
@@ -215,6 +222,40 @@ impl Workspace {
         }
     }
 
+    fn set_document_language(&mut self, id: DocumentId, language: &str, cx: &mut Context<Self>) {
+        let Some(document) = self.document_mut(id) else {
+            return;
+        };
+        if document.language == language {
+            return;
+        }
+        document.language = language.into();
+        document.editor.update(cx, |state, cx| {
+            state.set_highlighter(language, cx);
+        });
+        cx.notify();
+    }
+
+    fn set_document_folding(
+        &mut self,
+        id: DocumentId,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(document) = self.document_mut(id) else {
+            return;
+        };
+        if document.folding_enabled == enabled {
+            return;
+        }
+        document.folding_enabled = enabled;
+        document.editor.update(cx, |state, cx| {
+            state.set_folding(enabled, window, cx);
+        });
+        cx.notify();
+    }
+
     #[cfg(test)]
     pub(crate) fn document_count(&self) -> usize {
         self.documents.len()
@@ -231,6 +272,38 @@ impl Workspace {
         if let Some(document) = self.document_mut(id) {
             document.saved_revision = document.revision;
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_document_language_for_test(
+        &mut self,
+        id: DocumentId,
+        language: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_document_language(id, language, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn document_language_for_test(&self, id: DocumentId) -> Option<String> {
+        self.document(id)
+            .map(|document| document.language.to_string())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_document_folding_for_test(
+        &mut self,
+        id: DocumentId,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_document_folding(id, enabled, window, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn document_folding_for_test(&self, id: DocumentId) -> Option<bool> {
+        self.document(id).map(|document| document.folding_enabled)
     }
 
     #[cfg(test)]
@@ -719,8 +792,7 @@ impl Render for Workspace {
             .map(|document| document.title.clone())
             .unwrap_or_else(|| "未命名".into());
         let language = active
-            .and_then(|document| document.path.as_deref())
-            .map(editor::language_for_path)
+            .map(|document| document.language.as_ref())
             .unwrap_or("plaintext");
         let encoding = active
             .map(|document| format!("{:?}", document.encoding))
@@ -754,6 +826,10 @@ impl Render for Workspace {
                 )
         });
         let can_edit = !self.is_busy();
+        let language_value = active
+            .map(|document| document.language.clone())
+            .unwrap_or_else(|| "plaintext".into());
+        let folding_enabled = active.is_some_and(|document| document.folding_enabled);
         div()
             .id("rueditor")
             .track_focus(&self.focus)
@@ -785,6 +861,46 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Close, window, cx| {
                 let id = this.active_id();
                 this.request_close_document(id, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetPlaintext, _, cx| {
+                this.set_document_language(this.active_id(), "plaintext", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetRust, _, cx| {
+                this.set_document_language(this.active_id(), "rust", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetPython, _, cx| {
+                this.set_document_language(this.active_id(), "python", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetJavaScript, _, cx| {
+                this.set_document_language(this.active_id(), "javascript", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetTypeScript, _, cx| {
+                this.set_document_language(this.active_id(), "typescript", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetJson, _, cx| {
+                this.set_document_language(this.active_id(), "json", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetHtml, _, cx| {
+                this.set_document_language(this.active_id(), "html", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetCss, _, cx| {
+                this.set_document_language(this.active_id(), "css", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetMarkdown, _, cx| {
+                this.set_document_language(this.active_id(), "markdown", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetToml, _, cx| {
+                this.set_document_language(this.active_id(), "toml", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetYaml, _, cx| {
+                this.set_document_language(this.active_id(), "yaml", cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFolding, window, cx| {
+                let id = this.active_id();
+                let enabled = this
+                    .document(id)
+                    .is_some_and(|document| !document.folding_enabled);
+                this.set_document_folding(id, enabled, window, cx);
             }))
             .child(
                 div()
@@ -841,6 +957,84 @@ impl Render for Workspace {
                             .disabled(!can_edit)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.format_document(this.active_id(), window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("language")
+                            .ghost()
+                            .small()
+                            .label(editor::language_label(language_value.as_ref()))
+                            .disabled(!can_edit)
+                            .dropdown_menu(move |menu, _, _| {
+                                menu.menu_with_check(
+                                    "纯文本",
+                                    language_value == "plaintext",
+                                    Box::new(SetPlaintext),
+                                )
+                                .menu_with_check(
+                                    "Rust",
+                                    language_value == "rust",
+                                    Box::new(SetRust),
+                                )
+                                .menu_with_check(
+                                    "Python",
+                                    language_value == "python",
+                                    Box::new(SetPython),
+                                )
+                                .menu_with_check(
+                                    "JavaScript",
+                                    language_value == "javascript",
+                                    Box::new(SetJavaScript),
+                                )
+                                .menu_with_check(
+                                    "TypeScript",
+                                    language_value == "typescript",
+                                    Box::new(SetTypeScript),
+                                )
+                                .menu_with_check(
+                                    "JSON",
+                                    language_value == "json",
+                                    Box::new(SetJson),
+                                )
+                                .menu_with_check(
+                                    "HTML",
+                                    language_value == "html",
+                                    Box::new(SetHtml),
+                                )
+                                .menu_with_check("CSS", language_value == "css", Box::new(SetCss))
+                                .menu_with_check(
+                                    "Markdown",
+                                    language_value == "markdown",
+                                    Box::new(SetMarkdown),
+                                )
+                                .menu_with_check(
+                                    "TOML",
+                                    language_value == "toml",
+                                    Box::new(SetToml),
+                                )
+                                .menu_with_check(
+                                    "YAML",
+                                    language_value == "yaml",
+                                    Box::new(SetYaml),
+                                )
+                            }),
+                    )
+                    .child(
+                        Button::new("folding")
+                            .ghost()
+                            .small()
+                            .label(if folding_enabled {
+                                "折叠已启用"
+                            } else {
+                                "折叠已关闭"
+                            })
+                            .disabled(!can_edit)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let id = this.active_id();
+                                let enabled = this
+                                    .document(id)
+                                    .is_some_and(|document| !document.folding_enabled);
+                                this.set_document_folding(id, enabled, window, cx);
                             })),
                     )
                     .child(div().flex_1())

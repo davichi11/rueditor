@@ -27,6 +27,8 @@ pub(super) struct Document {
     pub(super) path: Option<PathBuf>,
     pub(super) title: SharedString,
     pub(super) editor: Entity<EditorState>,
+    pub(super) language: SharedString,
+    pub(super) folding_enabled: bool,
     pub(super) encoding: Encoding,
     pub(super) newline: Newline,
     pub(super) revision: u64,

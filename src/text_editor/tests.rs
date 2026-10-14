@@ -1,13 +1,32 @@
 //! 文件边界测试；后台打开使用平台选择器的测试模拟接口。
 
 use super::super::document::{Encoding, Newline};
-use super::super::editor::{JsonFormatResult, Open, SaveAs, format_json};
+use super::super::editor::{JsonFormatResult, Open, SaveAs, format_json, language_for_path};
 use super::super::file_io::{bytes_for_save, load};
 use super::super::workspace::Workspace;
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AppContext, TestAppContext, px, size};
 use std::io::ErrorKind;
+use std::path::Path;
+
+#[test]
+fn detects_m4_languages_from_common_extensions() {
+    for (path, language) in [
+        ("main.rs", "rust"),
+        ("script.py", "python"),
+        ("app.ts", "typescript"),
+        ("view.html", "html"),
+        ("style.css", "css"),
+        ("data.json", "json"),
+        ("README.md", "markdown"),
+        ("Cargo.toml", "toml"),
+        ("config.yaml", "yaml"),
+        ("unknown.bin", "plaintext"),
+    ] {
+        assert_eq!(language_for_path(Path::new(path)), language, "{path}");
+    }
+}
 
 #[test]
 fn utf8_bom_and_crlf_round_trip() {
@@ -127,6 +146,62 @@ async fn workspace_keeps_document_editors_and_dirty_state_independent(cx: &mut T
         assert!(workspace.document_is_dirty(first));
         assert!(workspace.document_is_dirty(second));
     });
+}
+
+#[gpui_kit::test]
+async fn changing_language_keeps_text_and_dirty_state(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_value(id, "fn main() {}", window, cx);
+            let before = workspace.document_text(id, cx);
+            workspace.set_document_language_for_test(id, "python", cx);
+            assert_eq!(workspace.document_text(id, cx), before);
+            assert!(workspace.document_is_dirty(id));
+            assert_eq!(
+                workspace.document_language_for_test(id),
+                Some("python".to_string())
+            );
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn toggling_folding_keeps_text_and_dirty_state(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_value(id, "fn main() {\n    println!(\"ok\");\n}\n", window, cx);
+            let before = workspace.document_text(id, cx);
+            workspace.set_document_folding_for_test(id, false, window, cx);
+            assert_eq!(workspace.document_text(id, cx), before);
+            assert!(workspace.document_is_dirty(id));
+            assert_eq!(workspace.document_folding_for_test(id), Some(false));
+            workspace.set_document_folding_for_test(id, true, window, cx);
+            assert_eq!(workspace.document_text(id, cx), before);
+            assert_eq!(workspace.document_folding_for_test(id), Some(true));
+        });
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

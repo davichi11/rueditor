@@ -7,7 +7,19 @@ description = "A lightweight native text editor built with GPUI Kit"
 
 [dependencies]
 tempfile = "3.27"
-gpui-kit = { version = "0.6.1", features = ["tree-sitter-rust", "tree-sitter-python"] }
+gpui-kit = { version = "0.6.1", features = [
+    "tree-sitter",
+    "tree-sitter-rust",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-tsx",
+    "tree-sitter-html",
+    "tree-sitter-css",
+    "tree-sitter-markdown",
+    "tree-sitter-toml",
+    "tree-sitter-yaml",
+] }
 jsonrepair = "0.1.0"
 serde_json = "1"
 

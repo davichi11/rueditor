@@ -2,7 +2,50 @@
 
 use gpui_kit::actions;
 
-actions!(text_editor, [New, Open, Save, SaveAs, Format, Close]);
+actions!(
+    text_editor,
+    [
+        New,
+        Open,
+        Save,
+        SaveAs,
+        Format,
+        Close,
+        SetPlaintext,
+        SetRust,
+        SetPython,
+        SetJavaScript,
+        SetTypeScript,
+        SetJson,
+        SetHtml,
+        SetCss,
+        SetMarkdown,
+        SetToml,
+        SetYaml,
+        ToggleFolding
+    ]
+);
+
+pub(super) const LANGUAGE_OPTIONS: &[(&str, &str)] = &[
+    ("plaintext", "纯文本"),
+    ("rust", "Rust"),
+    ("python", "Python"),
+    ("javascript", "JavaScript"),
+    ("typescript", "TypeScript"),
+    ("json", "JSON"),
+    ("html", "HTML"),
+    ("css", "CSS"),
+    ("markdown", "Markdown"),
+    ("toml", "TOML"),
+    ("yaml", "YAML"),
+];
+
+pub(super) fn language_label(language: &str) -> &'static str {
+    LANGUAGE_OPTIONS
+        .iter()
+        .find_map(|(value, label)| (*value == language).then_some(*label))
+        .unwrap_or("纯文本")
+}
 
 /// 根据文件扩展名选择 Tree-sitter 语言；未知类型回退到纯文本。
 pub(super) fn language_for_path(path: &std::path::Path) -> &'static str {

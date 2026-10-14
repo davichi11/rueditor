@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/gpui-test.iml" filepath="$PROJECT_DIR$/.idea/gpui-test.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/rueditor.iml" filepath="$PROJECT_DIR$/.idea/rueditor.iml" />
     </modules>
   </component>
 </project>
