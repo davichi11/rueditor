@@ -22,7 +22,9 @@ actions!(
         SetMarkdown,
         SetToml,
         SetYaml,
-        ToggleFolding
+        ToggleFolding,
+        FindNext,
+        FindPrevious
     ]
 );
 

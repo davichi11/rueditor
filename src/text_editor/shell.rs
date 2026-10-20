@@ -1,6 +1,7 @@
 //! Rueditor 应用壳：平台无关的快捷键和窗口启动配置。
 
-use super::editor;
+use super::editor::{self, FindNext, FindPrevious};
+use gpui_kit::component::input::{Replace, Search};
 use gpui_kit::*;
 
 pub(super) const APP_ID: &str = "local.rueditor.app";
@@ -9,7 +10,7 @@ pub(super) const APP_ID: &str = "local.rueditor.app";
 ///
 /// GPUI 的 `secondary` 在 macOS 上表示 Command，在 Windows/Linux 上表示
 /// Control，避免把 macOS 专用的 `cmd` 绑定错误地带到其他平台。
-pub(super) fn key_bindings() -> [KeyBinding; 6] {
+pub(super) fn key_bindings() -> [KeyBinding; 10] {
     [
         KeyBinding::new("secondary-n", editor::New, None),
         KeyBinding::new("secondary-o", editor::Open, None),
@@ -17,6 +18,10 @@ pub(super) fn key_bindings() -> [KeyBinding; 6] {
         KeyBinding::new("secondary-shift-s", editor::SaveAs, None),
         KeyBinding::new("secondary-w", editor::Close, None),
         KeyBinding::new("secondary-q", editor::Close, None),
+        KeyBinding::new("secondary-f", Search, None),
+        KeyBinding::new("secondary-shift-f", Replace, None),
+        KeyBinding::new("secondary-g", FindNext, None),
+        KeyBinding::new("secondary-shift-g", FindPrevious, None),
     ]
 }
 

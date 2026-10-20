@@ -4,7 +4,7 @@ use super::document::{Document, DocumentId, Encoding, Newline};
 use super::{editor, file_io};
 use gpui_kit::base::Selectable;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Root, Sizable, StyledExt,
+    ActiveTheme, Disableable, IconName, Root, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::{Editor, EditorState, InputEvent},
     menu::DropdownMenu,
@@ -16,8 +16,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use editor::{
-    Close, Format, New, Open, Save, SaveAs, SetCss, SetHtml, SetJavaScript, SetJson, SetMarkdown,
-    SetPlaintext, SetPython, SetRust, SetToml, SetTypeScript, SetYaml, ToggleFolding,
+    Close, FindNext, FindPrevious, Format, New, Open, Save, SaveAs, SetCss, SetHtml, SetJavaScript,
+    SetJson, SetMarkdown, SetPlaintext, SetPython, SetRust, SetToml, SetTypeScript, SetYaml,
+    ToggleFolding,
 };
 
 #[derive(Clone, Copy)]
@@ -222,6 +223,38 @@ impl Workspace {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn replace_all_for_test(
+        &mut self,
+        id: DocumentId,
+        query: &str,
+        replacement: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(document) = self.document(id) {
+            document.editor.update(cx, |state, cx| {
+                state.set_search_query(query, true, cx);
+                state.replace_all_search_matches(replacement, window, cx);
+            });
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn undo_document_for_test(
+        &mut self,
+        id: DocumentId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(document) = self.document(id) {
+            document
+                .editor
+                .update(cx, |state, cx| state.focus(window, cx));
+            window.dispatch_action(Box::new(gpui_kit::component::input::Undo), cx);
+        }
+    }
+
     fn set_document_language(&mut self, id: DocumentId, language: &str, cx: &mut Context<Self>) {
         let Some(document) = self.document_mut(id) else {
             return;
@@ -234,6 +267,22 @@ impl Workspace {
             state.set_highlighter(language, cx);
         });
         cx.notify();
+    }
+
+    fn find_next(&self, id: DocumentId, cx: &mut Context<Self>) {
+        if let Some(editor) = self.document(id).map(|document| document.editor.clone()) {
+            editor.update(cx, |state, cx| {
+                let _ = state.next_search_match(cx);
+            });
+        }
+    }
+
+    fn find_previous(&self, id: DocumentId, cx: &mut Context<Self>) {
+        if let Some(editor) = self.document(id).map(|document| document.editor.clone()) {
+            editor.update(cx, |state, cx| {
+                let _ = state.previous_search_match(cx);
+            });
+        }
     }
 
     fn set_document_folding(
@@ -791,9 +840,6 @@ impl Render for Workspace {
         let title = active
             .map(|document| document.title.clone())
             .unwrap_or_else(|| "未命名".into());
-        let language = active
-            .map(|document| document.language.as_ref())
-            .unwrap_or("plaintext");
         let encoding = active
             .map(|document| format!("{:?}", document.encoding))
             .unwrap_or_else(|| "Utf8".to_string());
@@ -819,7 +865,9 @@ impl Render for Workspace {
                     Button::new(format!("close-tab-{}", id.0))
                         .ghost()
                         .xsmall()
-                        .label("×")
+                        .icon(IconName::Close)
+                        .accessibility_label("关闭标签")
+                        .tooltip("关闭标签")
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.request_close_document(id, window, cx)
                         })),
@@ -902,6 +950,12 @@ impl Render for Workspace {
                     .is_some_and(|document| !document.folding_enabled);
                 this.set_document_folding(id, enabled, window, cx);
             }))
+            .on_action(cx.listener(|this, _: &FindNext, _, cx| {
+                this.find_next(this.active_id(), cx);
+            }))
+            .on_action(cx.listener(|this, _: &FindPrevious, _, cx| {
+                this.find_previous(this.active_id(), cx);
+            }))
             .child(
                 div()
                     .h_flex()
@@ -915,6 +969,7 @@ impl Render for Workspace {
                         Button::new("new")
                             .ghost()
                             .small()
+                            .icon(IconName::FileText)
                             .label("新建")
                             .disabled(!can_edit)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -925,6 +980,7 @@ impl Render for Workspace {
                         Button::new("open")
                             .ghost()
                             .small()
+                            .icon(IconName::FolderOpen)
                             .label("打开…")
                             .disabled(!can_edit)
                             .on_click(cx.listener(|this, _, window, cx| this.open(cx, window))),
@@ -933,6 +989,7 @@ impl Render for Workspace {
                         Button::new("save")
                             .ghost()
                             .small()
+                            .icon(IconName::File)
                             .label("保存")
                             .disabled(!can_edit)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -943,6 +1000,7 @@ impl Render for Workspace {
                         Button::new("save-as")
                             .ghost()
                             .small()
+                            .icon(IconName::FileText)
                             .label("另存为…")
                             .disabled(!can_edit)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -953,6 +1011,7 @@ impl Render for Workspace {
                         Button::new("format")
                             .ghost()
                             .small()
+                            .icon(IconName::Settings2)
                             .label("格式化")
                             .disabled(!can_edit)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -960,85 +1019,135 @@ impl Render for Workspace {
                             })),
                     )
                     .child(
-                        Button::new("language")
+                        Button::new("find")
                             .ghost()
                             .small()
-                            .label(editor::language_label(language_value.as_ref()))
+                            .icon(IconName::Search)
+                            .label("查找")
                             .disabled(!can_edit)
-                            .dropdown_menu(move |menu, _, _| {
-                                menu.menu_with_check(
-                                    "纯文本",
-                                    language_value == "plaintext",
-                                    Box::new(SetPlaintext),
-                                )
-                                .menu_with_check(
-                                    "Rust",
-                                    language_value == "rust",
-                                    Box::new(SetRust),
-                                )
-                                .menu_with_check(
-                                    "Python",
-                                    language_value == "python",
-                                    Box::new(SetPython),
-                                )
-                                .menu_with_check(
-                                    "JavaScript",
-                                    language_value == "javascript",
-                                    Box::new(SetJavaScript),
-                                )
-                                .menu_with_check(
-                                    "TypeScript",
-                                    language_value == "typescript",
-                                    Box::new(SetTypeScript),
-                                )
-                                .menu_with_check(
-                                    "JSON",
-                                    language_value == "json",
-                                    Box::new(SetJson),
-                                )
-                                .menu_with_check(
-                                    "HTML",
-                                    language_value == "html",
-                                    Box::new(SetHtml),
-                                )
-                                .menu_with_check("CSS", language_value == "css", Box::new(SetCss))
-                                .menu_with_check(
-                                    "Markdown",
-                                    language_value == "markdown",
-                                    Box::new(SetMarkdown),
-                                )
-                                .menu_with_check(
-                                    "TOML",
-                                    language_value == "toml",
-                                    Box::new(SetToml),
-                                )
-                                .menu_with_check(
-                                    "YAML",
-                                    language_value == "yaml",
-                                    Box::new(SetYaml),
-                                )
-                            }),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(editor) = this
+                                    .document(this.active_id())
+                                    .map(|document| document.editor.clone())
+                                {
+                                    editor.update(cx, |state, cx| state.open_search(false, cx));
+                                }
+                            })),
                     )
                     .child(
-                        Button::new("folding")
+                        Button::new("replace")
                             .ghost()
                             .small()
-                            .label(if folding_enabled {
-                                "折叠已启用"
-                            } else {
-                                "折叠已关闭"
-                            })
+                            .icon(IconName::Replace)
+                            .label("替换")
                             .disabled(!can_edit)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let id = this.active_id();
-                                let enabled = this
-                                    .document(id)
-                                    .is_some_and(|document| !document.folding_enabled);
-                                this.set_document_folding(id, enabled, window, cx);
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(editor) = this
+                                    .document(this.active_id())
+                                    .map(|document| document.editor.clone())
+                                {
+                                    editor.update(cx, |state, cx| state.open_search(true, cx));
+                                }
                             })),
                     )
                     .child(div().flex_1())
-                    .child(format!("{}{}", title, if active_dirty { " *" } else { "" })),
+                    .child(format!("{}{}", title, if active_dirty { " *" } else { "" }))
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!("{encoding} · {newline}")),
+                            )
+                            .child(
+                                Button::new("language")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::FileText)
+                                    .label(editor::language_label(language_value.as_ref()))
+                                    .disabled(!can_edit)
+                                    .dropdown_menu(move |menu, _, _| {
+                                        menu.menu_with_check(
+                                            "纯文本",
+                                            language_value == "plaintext",
+                                            Box::new(SetPlaintext),
+                                        )
+                                        .menu_with_check(
+                                            "Rust",
+                                            language_value == "rust",
+                                            Box::new(SetRust),
+                                        )
+                                        .menu_with_check(
+                                            "Python",
+                                            language_value == "python",
+                                            Box::new(SetPython),
+                                        )
+                                        .menu_with_check(
+                                            "JavaScript",
+                                            language_value == "javascript",
+                                            Box::new(SetJavaScript),
+                                        )
+                                        .menu_with_check(
+                                            "TypeScript",
+                                            language_value == "typescript",
+                                            Box::new(SetTypeScript),
+                                        )
+                                        .menu_with_check(
+                                            "JSON",
+                                            language_value == "json",
+                                            Box::new(SetJson),
+                                        )
+                                        .menu_with_check(
+                                            "HTML",
+                                            language_value == "html",
+                                            Box::new(SetHtml),
+                                        )
+                                        .menu_with_check(
+                                            "CSS",
+                                            language_value == "css",
+                                            Box::new(SetCss),
+                                        )
+                                        .menu_with_check(
+                                            "Markdown",
+                                            language_value == "markdown",
+                                            Box::new(SetMarkdown),
+                                        )
+                                        .menu_with_check(
+                                            "TOML",
+                                            language_value == "toml",
+                                            Box::new(SetToml),
+                                        )
+                                        .menu_with_check(
+                                            "YAML",
+                                            language_value == "yaml",
+                                            Box::new(SetYaml),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                Button::new("folding")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::PanelBottom)
+                                    .label(if folding_enabled {
+                                        "折叠已启用"
+                                    } else {
+                                        "折叠已关闭"
+                                    })
+                                    .disabled(!can_edit)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        let id = this.active_id();
+                                        let enabled = this
+                                            .document(id)
+                                            .is_some_and(|document| !document.folding_enabled);
+                                        this.set_document_folding(id, enabled, window, cx);
+                                    })),
+                            ),
+                    ),
             )
             .child(
                 TabBar::new("documents")
@@ -1046,11 +1155,17 @@ impl Render for Workspace {
                     .small()
                     .selected_index(active_index)
                     .children(tabs)
-                    .suffix(Button::new("new-tab").ghost().small().label("+").on_click(
-                        cx.listener(|this, _, window, cx| {
-                            this.new_tab(window, cx);
-                        }),
-                    )),
+                    .suffix(
+                        Button::new("new-tab")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Plus)
+                            .accessibility_label("新建标签")
+                            .tooltip("新建标签")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.new_tab(window, cx);
+                            })),
+                    ),
             )
             .child(
                 div()
@@ -1073,7 +1188,6 @@ impl Render for Workspace {
                     } else {
                         "未命名".to_string()
                     })
-                    .right(format!("{encoding} · {newline} · {language}"))
                     .child(if self.loading {
                         "处理中…".into()
                     } else {

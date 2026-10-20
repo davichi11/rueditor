@@ -43,7 +43,7 @@ mod shell_tests {
     fn primary_application_shortcuts_use_secondary_modifier() {
         let bindings = super::shell::key_bindings();
 
-        assert_eq!(bindings.len(), 6);
+        assert_eq!(bindings.len(), 10);
         assert!(bindings.iter().all(|binding| {
             binding
                 .keystrokes()

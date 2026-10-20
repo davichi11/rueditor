@@ -3,6 +3,7 @@
 use super::super::document::{Encoding, Newline};
 use super::super::editor::{JsonFormatResult, Open, SaveAs, format_json, language_for_path};
 use super::super::file_io::{bytes_for_save, load};
+use super::super::shell::key_bindings;
 use super::super::workspace::Workspace;
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
@@ -26,6 +27,35 @@ fn detects_m4_languages_from_common_extensions() {
     ] {
         assert_eq!(language_for_path(Path::new(path)), language, "{path}");
     }
+}
+
+#[test]
+fn m5_shortcuts_include_find_and_replace() {
+    let bindings = key_bindings();
+    assert!(bindings.iter().any(|binding| {
+        binding.keystrokes().first().is_some_and(|keystroke| {
+            keystroke.inner().modifiers.secondary() && keystroke.inner().key == "f"
+        })
+    }));
+    assert!(bindings.iter().any(|binding| {
+        binding.keystrokes().first().is_some_and(|keystroke| {
+            keystroke.inner().modifiers.secondary()
+                && keystroke.inner().modifiers.shift
+                && keystroke.inner().key == "f"
+        })
+    }));
+    assert!(bindings.iter().any(|binding| {
+        binding.keystrokes().first().is_some_and(|keystroke| {
+            keystroke.inner().modifiers.secondary() && keystroke.inner().key == "g"
+        })
+    }));
+    assert!(bindings.iter().any(|binding| {
+        binding.keystrokes().first().is_some_and(|keystroke| {
+            keystroke.inner().modifiers.secondary()
+                && keystroke.inner().modifiers.shift
+                && keystroke.inner().key == "g"
+        })
+    }));
 }
 
 #[test]
@@ -174,6 +204,69 @@ async fn changing_language_keeps_text_and_dirty_state(cx: &mut TestAppContext) {
         });
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+async fn editor_search_replacement_updates_document_and_dirty_state(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_value(id, "alpha alpha", window, cx);
+            workspace.mark_document_saved(id);
+            workspace.replace_all_for_test(id, "alpha", "beta", window, cx);
+        });
+    })
+    .unwrap();
+
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        let id = workspace.active_document_id();
+        assert_eq!(
+            workspace.document_text(id, cx),
+            Some("beta beta".to_string())
+        );
+        assert!(workspace.document_is_dirty(id));
+    });
+}
+
+#[gpui_kit::test]
+async fn editor_replace_all_is_one_undoable_operation(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_value(id, "alpha alpha", window, cx);
+            workspace.replace_all_for_test(id, "alpha", "beta", window, cx);
+            workspace.undo_document_for_test(id, window, cx);
+        });
+    })
+    .unwrap();
+
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        let id = workspace.active_document_id();
+        assert_eq!(
+            workspace.document_text(id, cx),
+            Some("alpha alpha".to_string())
+        );
+    });
 }
 
 #[gpui_kit::test]
