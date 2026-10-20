@@ -1,7 +1,17 @@
 //! 文件 I/O 边界：只处理 UTF-8/BOM 和 LF/CRLF，保留明确的失败信息。
 use super::document::{Encoding, Newline};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FileFingerprint {
+    pub(super) length: u64,
+    pub(super) modified: Option<SystemTime>,
+    pub(super) content_hash: u64,
+}
 
 #[derive(Debug)]
 /// 从磁盘读取并规范化后的文本及其原始格式信息。
@@ -10,11 +20,25 @@ pub(super) struct LoadedText {
     pub(super) text: String,
     pub(super) encoding: Encoding,
     pub(super) newline: Newline,
+    pub(super) fingerprint: FileFingerprint,
+}
+
+pub(super) fn fingerprint(path: &Path) -> io::Result<FileFingerprint> {
+    let bytes = std::fs::read(path)?;
+    let metadata = std::fs::metadata(path)?;
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Ok(FileFingerprint {
+        length: metadata.len(),
+        modified: metadata.modified().ok(),
+        content_hash: hasher.finish(),
+    })
 }
 
 /// 读取文本文件，校验 UTF-8，并将 CRLF 规范化为编辑器内部的 LF。
 pub(super) fn load(path: &Path) -> io::Result<LoadedText> {
     let bytes = std::fs::read(path)?;
+    let fingerprint = fingerprint(path)?;
     let (encoding, body) = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         (Encoding::Utf8Bom, &bytes[3..])
     } else {
@@ -43,7 +67,27 @@ pub(super) fn load(path: &Path) -> io::Result<LoadedText> {
         text: text.replace("\r\n", "\n"),
         encoding,
         newline,
+        fingerprint,
     })
+}
+
+pub(super) fn save_if_unchanged(
+    path: &Path,
+    bytes: &[u8],
+    expected: Option<&FileFingerprint>,
+) -> io::Result<PathBuf> {
+    if let Some(expected) = expected {
+        let unchanged = fingerprint(path)
+            .map(|actual| actual == *expected)
+            .unwrap_or(false);
+        if !unchanged {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "文件已被外部修改或删除，未覆盖磁盘内容；请使用另存为保存当前修改",
+            ));
+        }
+    }
+    save(path, bytes)
 }
 
 /// 同目录原子替换。解析符号链接后写入目标，拒绝只读文件。
