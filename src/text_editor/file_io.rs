@@ -6,10 +6,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// 打开或保存成功时记下的磁盘快照，用来判断文件有没有被外部改过。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FileFingerprint {
     pub(super) length: u64,
+    /// 取不到修改时间时为 `None`，比较时会把它当成差异的一部分。
     pub(super) modified: Option<SystemTime>,
+    /// 文件全部字节的哈希，避免只靠长度和修改时间误判。
     pub(super) content_hash: u64,
 }
 
@@ -23,6 +26,7 @@ pub(super) struct LoadedText {
     pub(super) fingerprint: FileFingerprint,
 }
 
+/// 读取路径上的字节并计算指纹。两次读取之间文件被替换时，调用方应视为已变化。
 pub(super) fn fingerprint(path: &Path) -> io::Result<FileFingerprint> {
     let bytes = std::fs::read(path)?;
     let metadata = std::fs::metadata(path)?;
@@ -50,6 +54,7 @@ pub(super) fn load(path: &Path) -> io::Result<LoadedText> {
             format!("文件不是有效 UTF-8：{error}"),
         )
     })?;
+    // 去掉成对 CRLF 后仍有 CR，或同一文件里同时出现 CRLF 和单独 LF，都拒绝读取。
     let unpaired = text.replace("\r\n", "");
     if unpaired.contains('\r') || (text.contains("\r\n") && unpaired.contains('\n')) {
         return Err(io::Error::new(
@@ -71,6 +76,10 @@ pub(super) fn load(path: &Path) -> io::Result<LoadedText> {
     })
 }
 
+/// 磁盘内容仍等于 `expected` 时才写入。
+///
+/// `expected` 为 `None` 表示新文件，不做外部修改检查。
+/// 指纹不一致，或文件已经被删掉，都拒绝覆盖并保留磁盘现状。
 pub(super) fn save_if_unchanged(
     path: &Path,
     bytes: &[u8],
@@ -94,6 +103,7 @@ pub(super) fn save_if_unchanged(
 /// 将字节通过同目录临时文件原子替换写入目标路径。
 pub(super) fn save(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
     use std::io::Write;
+    // 已有符号链接时写到解析后的目标，避免把链接本身替换成普通文件。
     let target = match std::fs::symlink_metadata(path) {
         Ok(_) => std::fs::canonicalize(path)?,
         Err(e) if e.kind() == io::ErrorKind::NotFound => path.to_path_buf(),
@@ -115,6 +125,7 @@ pub(super) fn save(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
     }
     let mut temp = tempfile::NamedTempFile::new_in(target.parent().unwrap_or(Path::new(".")))?;
     temp.write_all(bytes)?;
+    // 原子替换会换掉 inode，先把原权限拷到临时文件上。
     if let Some(meta) = metadata {
         temp.as_file().set_permissions(meta.permissions())?;
     }

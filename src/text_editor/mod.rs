@@ -27,6 +27,7 @@ pub(crate) fn run() {
                     let weak = workspace.downgrade();
                     window.on_window_should_close(cx, move |window, cx| {
                         let _ = weak.update(cx, |workspace, cx| workspace.close(window, cx));
+                        // 返回 false，关闭先交给工作区做保存确认，确认完成后再移除窗口。
                         false
                     });
                     cx.new(|cx| Root::new(workspace, window, cx))

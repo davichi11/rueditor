@@ -4,6 +4,7 @@ use super::editor::{self, FindNext, FindPrevious};
 use gpui_kit::component::input::{Replace, Search};
 use gpui_kit::*;
 
+/// 窗口和平台集成使用的应用标识。
 pub(super) const APP_ID: &str = "local.rueditor.app";
 
 /// 返回使用平台主修饰键的应用级快捷键。
@@ -113,6 +114,7 @@ pub(super) fn app_menus() -> [Menu; 8] {
     ]
 }
 
+/// 把应用菜单安装到当前 GPUI 应用上。
 pub(super) fn set_app_menus(cx: &mut App) {
     cx.set_menus(app_menus());
 }

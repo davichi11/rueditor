@@ -6,6 +6,7 @@ use regex::{Regex, RegexBuilder};
 use std::ops::Range;
 use std::sync::OnceLock;
 
+// 菜单、快捷键和工作区监听共用这一组动作类型。
 actions!(
     text_editor,
     [
@@ -60,6 +61,7 @@ actions!(
     ]
 );
 
+/// 语言标识和状态栏上的显示名。
 pub(super) const LANGUAGE_OPTIONS: &[(&str, &str)] = &[
     ("plaintext", "纯文本"),
     ("rust", "Rust"),
@@ -78,8 +80,11 @@ pub(super) const LANGUAGE_OPTIONS: &[(&str, &str)] = &[
 /// 搜索输入或匹配过程中的可恢复错误。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum SearchError {
+    /// 查询为空，不启动匹配。
     EmptyQuery,
+    /// 正则无法编译。`reason` 来自正则引擎。
     InvalidPattern { query: String, reason: String },
+    /// 表达式有效，但文本里没有符合选项的匹配。
     NoMatches { query: String },
 }
 
@@ -125,6 +130,7 @@ pub(super) fn replace_matches(
     let mut cursor = 0;
     let mut count = 0;
 
+    // 全词过滤发生在展开替换之前；被跳过的区间留在原文里。
     for captures in regex.captures_iter(text) {
         let matched = captures
             .get(0)
@@ -161,6 +167,7 @@ pub(super) struct ReplaceResult {
     pub(super) count: usize,
 }
 
+/// 按选项编译查找表达式。普通模式先转义，避免把用户输入当成正则。
 fn compile_search_regex(query: &str, options: SearchOptions) -> Result<Regex, SearchError> {
     if query.is_empty() {
         return Err(SearchError::EmptyQuery);
@@ -179,6 +186,7 @@ fn compile_search_regex(query: &str, options: SearchOptions) -> Result<Regex, Se
         })
 }
 
+/// 匹配区间两侧都不是 Unicode 词字符时，才算全词匹配。
 fn is_whole_word_match(text: &str, start: usize, end: usize) -> bool {
     let previous_is_word = text[..start]
         .chars()
@@ -191,6 +199,7 @@ fn is_whole_word_match(text: &str, start: usize, end: usize) -> bool {
     !previous_is_word && !next_is_word
 }
 
+/// 用 `\w` 的 Unicode 语义判断词字符，中文等非 ASCII 字符也算在内。
 fn is_unicode_word_character(character: char) -> bool {
     static WORD_CHARACTER: OnceLock<Regex> = OnceLock::new();
     let regex = WORD_CHARACTER
@@ -202,28 +211,41 @@ fn is_unicode_word_character(character: char) -> bool {
 /// 可作用于当前选择的纯文本转换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TextTransform {
+    /// 选中文本转为大写。Unicode 大小写转换可能改变字节长度。
     Uppercase,
+    /// 选中文本转为小写。
     Lowercase,
 }
 
 /// 可作用于光标所在行的纯文本操作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LineTransform {
+    /// 删除光标所在行，并吃掉相邻的一个换行符。
     Delete,
+    /// 与上一行交换。已经在第一行时文本不变。
     MoveUp,
+    /// 与下一行交换。已经在最后一行时文本不变。
     MoveDown,
+    /// 在行首插入四个空格。
     Indent,
+    /// 去掉行首的一个制表符，或最多四个空格。
     Outdent,
 }
 
 /// 文本命令的可恢复输入与范围错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TextCommandError {
+    /// 输入为空、含非数字，或 `行:列` 的格式不对。
     InvalidInput,
+    /// 行号小于 1，或大于当前文本行数。
     LineOutOfRange,
+    /// 列号小于 1，或大于允许的最大列。
     ColumnOutOfRange,
+    /// 选区端点越界，或落在 UTF-8 字符中间。
     InvalidRange,
+    /// 选区为空，没有可转换的文本。
     EmptySelection,
+    /// 光标 offset 越界，或不在字符边界上。
     InvalidCursor,
 }
 
@@ -269,6 +291,7 @@ pub(super) fn parse_goto_position(
     Ok((line - 1, column - 1))
 }
 
+/// 解析正十进制整数。空串、符号和非数字字符都视为无效输入。
 fn parse_positive_decimal(input: &str) -> Result<usize, TextCommandError> {
     if input.is_empty() || !input.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(TextCommandError::InvalidInput);
@@ -328,6 +351,7 @@ pub(super) fn transform_current_line(
     match operation {
         LineTransform::Delete => {
             let mut result = String::with_capacity(text.len());
+            // 中间行连同自己的换行符删掉；最后一行则改删它前面的换行符。
             if text.as_bytes().get(line.end) == Some(&b'\n') {
                 result.push_str(&text[..line.start]);
                 result.push_str(&text[line.end + 1..]);
@@ -345,6 +369,7 @@ pub(super) fn transform_current_line(
                 LineTransform::MoveDown if index + 1 < lines.len() => index + 1,
                 _ => return Ok(text.to_owned()),
             };
+            // 先拆成不含换行的行再交换，最后按原文是否以换行结尾还原。
             let has_final_newline = text.ends_with('\n');
             let mut contents: Vec<&str> = text.split('\n').collect();
             if has_final_newline {
@@ -366,6 +391,7 @@ pub(super) fn transform_current_line(
         }
         LineTransform::Outdent => {
             let line_text = &text[line.clone()];
+            // 优先去掉一个制表符，否则最多去掉四个前导空格。
             let remove = if line_text.starts_with('\t') {
                 1
             } else {
@@ -386,6 +412,7 @@ pub(super) fn transform_current_line(
     }
 }
 
+/// 按 LF 切出每行内容的 UTF-8 byte range，不含换行符。空文本也返回一行。
 pub(super) fn line_ranges(text: &str) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut start = 0;
@@ -401,6 +428,7 @@ pub(super) fn line_ranges(text: &str) -> Vec<Range<usize>> {
     ranges
 }
 
+/// 把 0-based 行列换成 UTF-8 byte offset。列超出该行时停在行尾。
 pub(super) fn offset_for_position(text: &str, line: usize, character: usize) -> usize {
     let ranges = line_ranges(text);
     let Some(range) = ranges.get(line) else {
@@ -449,6 +477,7 @@ pub(super) fn remap_range_after_trimming(
         let content = segment.strip_suffix('\n').unwrap_or(segment);
         let kept_len = content.trim_end_matches(char::is_whitespace).len();
         let source_end = source_offset + content.len();
+        // 落在被删掉的行尾空白上的端点，收回到这一行保留下来的末尾。
         if range.start >= source_offset && range.start <= source_end {
             mapped_start = target_offset + range.start.saturating_sub(source_offset).min(kept_len);
         }
@@ -461,6 +490,7 @@ pub(super) fn remap_range_after_trimming(
     Ok(mapped_start..mapped_end)
 }
 
+/// 把 UTF-8 byte offset 换成 0-based 行列。列按 Unicode 标量计数，不按字节。
 pub(super) fn position_for_offset(text: &str, offset: usize) -> (usize, usize) {
     let offset = offset.min(text.len());
     let offset = (0..=offset)
@@ -473,6 +503,7 @@ pub(super) fn position_for_offset(text: &str, offset: usize) -> (usize, usize) {
     (line, prefix[line_start..].chars().count())
 }
 
+/// 返回语言的界面名称。未知标识显示为纯文本。
 pub(super) fn language_label(language: &str) -> &'static str {
     LANGUAGE_OPTIONS
         .iter()
@@ -517,7 +548,9 @@ pub(super) fn is_json_path(path: Option<&std::path::Path>) -> bool {
 /// JSON 格式化的结果，同时标记是否经过了容错修复。
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum JsonFormatResult {
+    /// 原文已经是合法 JSON，只做了缩进。
     Formatted(String),
+    /// 原文不合法，先修复再缩进。调用方应把文档标成已修改。
     Repaired(String),
 }
 
@@ -528,6 +561,7 @@ pub(super) fn format_json(value: &str) -> Result<JsonFormatResult, String> {
             .map(|formatted| JsonFormatResult::Formatted(format!("{formatted}\n")))
             .map_err(|error| format!("JSON 格式化失败：{error}")),
         Err(strict_error) => {
+            // 修复结果还要再严格解析一次，避免把修坏的文本当成格式化成功。
             let repaired = jsonrepair::repair_to_string(value, &jsonrepair::Options::default())
                 .map_err(|repair_error| {
                     format!("JSON 解析失败：{strict_error}；自动修复失败：{repair_error}")

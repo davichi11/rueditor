@@ -3,6 +3,7 @@
 #[path = "../text_editor/mod.rs"]
 mod text_editor;
 
+/// 进程入口，只负责转到编辑器模块。
 fn main() {
     text_editor::run();
 }
