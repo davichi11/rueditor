@@ -11,7 +11,7 @@ pub(super) const APP_ID: &str = "local.rueditor.app";
 ///
 /// GPUI 的 `secondary` 在 macOS 上表示 Command，在 Windows/Linux 上表示
 /// Control，避免把 macOS 专用的 `cmd` 绑定错误地带到其他平台。
-pub(super) fn key_bindings() -> [KeyBinding; 17] {
+pub(super) fn key_bindings() -> [KeyBinding; 18] {
     [
         KeyBinding::new("secondary-n", editor::New, None),
         KeyBinding::new("secondary-o", editor::Open, None),
@@ -30,6 +30,7 @@ pub(super) fn key_bindings() -> [KeyBinding; 17] {
         KeyBinding::new("alt-down", editor::MoveLineDown, None),
         KeyBinding::new("secondary-[", editor::OutdentSelection, None),
         KeyBinding::new("secondary-]", editor::IndentSelection, None),
+        KeyBinding::new("secondary-shift-p", editor::TogglePreview, None),
     ]
 }
 
@@ -47,13 +48,13 @@ pub(super) fn app_menus() -> [Menu; 8] {
             MenuItem::action("退出", editor::Quit),
         ]),
         Menu::new("编辑").items([
-            MenuItem::action("撤销", gpui_kit::component::input::Undo),
-            MenuItem::action("重做", gpui_kit::component::input::Redo),
+            MenuItem::action("撤销", component::input::Undo),
+            MenuItem::action("重做", component::input::Redo),
             MenuItem::separator(),
-            MenuItem::action("剪切", gpui_kit::component::input::Cut),
-            MenuItem::action("复制", gpui_kit::component::input::Copy),
-            MenuItem::action("粘贴", gpui_kit::component::input::Paste),
-            MenuItem::action("全选", gpui_kit::component::input::SelectAll),
+            MenuItem::action("剪切", component::input::Cut),
+            MenuItem::action("复制", component::input::Copy),
+            MenuItem::action("粘贴", component::input::Paste),
+            MenuItem::action("全选", component::input::SelectAll),
             MenuItem::separator(),
             MenuItem::action("跳转到行…", editor::GotoLine),
             MenuItem::action("复制当前行", editor::DuplicateLine),
@@ -76,6 +77,8 @@ pub(super) fn app_menus() -> [Menu; 8] {
             MenuItem::action("智能缩进", editor::ToggleSmartIndent),
             MenuItem::action("自动闭合括号", editor::ToggleAutoClose),
             MenuItem::action("切换代码折叠", editor::ToggleFolding),
+            MenuItem::separator(),
+            MenuItem::action("Markdown 预览", editor::TogglePreview),
         ]),
         Menu::new("文本").items([
             MenuItem::submenu(Menu::new("语言").items([
@@ -100,10 +103,10 @@ pub(super) fn app_menus() -> [Menu; 8] {
             ])),
         ]),
         Menu::new("查找").items([
-            MenuItem::action("查找", gpui_kit::component::input::Search),
-            MenuItem::action("替换", gpui_kit::component::input::Replace),
-            MenuItem::action("下一个匹配", editor::FindNext),
-            MenuItem::action("上一个匹配", editor::FindPrevious),
+            MenuItem::action("查找", Search),
+            MenuItem::action("替换", Replace),
+            MenuItem::action("下一个匹配", FindNext),
+            MenuItem::action("上一个匹配", FindPrevious),
             MenuItem::separator(),
             MenuItem::action("切换正则表达式", editor::ToggleRegex),
             MenuItem::action("区分大小写", editor::ToggleCaseSensitive),

@@ -8,13 +8,14 @@ use super::super::editor::{
     LowercaseSelection, MoveLineDown, MoveLineUp, Open, OutdentSelection, ReplaceAllMatches,
     SaveAs, TextTransform, ToggleRegex, ToggleSoftWrap, TrimTrailingWhitespace, UppercaseSelection,
     find_matches, format_json, language_for_path, parse_goto_position, remap_range_after_trimming,
-    replace_matches, transform_current_line, transform_selection, trim_trailing_whitespace,
+    replace_matches, supports_preview, transform_current_line, transform_selection,
+    trim_trailing_whitespace,
 };
 use super::super::file_io::{bytes_for_save, load, save_if_unchanged};
 use super::super::shell::key_bindings;
 use super::super::workspace::Workspace;
 use gpui_kit::component::Root;
-use gpui_kit::test::TestWindowExt;
+use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{AppContext, TestAppContext, px, size};
 use std::io::ErrorKind;
 use std::path::Path;
@@ -1306,4 +1307,205 @@ async fn saves_dirty_document_to_selected_path(cx: &mut TestAppContext) {
         assert_eq!(workspace.active_document_path(), Some(destination));
         assert!(!workspace.document_is_dirty(id));
     });
+}
+
+#[test]
+fn only_markdown_language_supports_preview() {
+    assert!(supports_preview("markdown"));
+    assert!(!supports_preview("rust"));
+    assert!(!supports_preview("plaintext"));
+    assert!(!supports_preview("json"));
+}
+
+#[test]
+fn preview_markdown_grammar_covers_common_document_structures() {
+    use markdown::mdast::Node;
+
+    fn collect(node: &Node, kinds: &mut Vec<&'static str>) {
+        let kind = match node {
+            Node::Heading(_) => "heading",
+            Node::List(_) => "list",
+            Node::Blockquote(_) => "blockquote",
+            Node::Code(_) => "code",
+            Node::Table(_) => "table",
+            Node::Strong(_) => "strong",
+            Node::Paragraph(_) => "paragraph",
+            _ => "other",
+        };
+        kinds.push(kind);
+        if let Some(children) = node.children() {
+            for child in children {
+                collect(child, kinds);
+            }
+        }
+    }
+
+    let source = "# 标题\n\n段落 **加粗**\n\n- 列表项\n\n> 引用\n\n```rust\nlet x = 1;\n```\n\n| 列 | 列 |\n| --- | --- |\n| 值 | 值 |\n";
+    let ast = markdown::to_mdast(source, &markdown::ParseOptions::gfm()).unwrap();
+    let mut kinds = Vec::new();
+    collect(&ast, &mut kinds);
+
+    // 预览依赖 CommonMark 与 GFM：标题、列表、引用、代码块和表格都要能解析出来。
+    for expected in ["heading", "list", "blockquote", "code", "table", "strong"] {
+        assert!(
+            kinds.contains(&expected),
+            "预览应当支持 {expected} 语法，实际解析到：{kinds:?}"
+        );
+    }
+}
+
+#[gpui_kit::test]
+async fn toggling_preview_on_markdown_document_enables_it(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_language_for_test(id, "markdown", cx);
+            assert_eq!(workspace.document_preview_enabled_for_test(id), Some(false));
+
+            workspace.toggle_preview_for_test(id, window, cx);
+            assert_eq!(workspace.document_preview_enabled_for_test(id), Some(true));
+            assert_eq!(workspace.message_for_test(), "已打开预览");
+
+            workspace.toggle_preview_for_test(id, window, cx);
+            assert_eq!(workspace.document_preview_enabled_for_test(id), Some(false));
+            assert_eq!(workspace.message_for_test(), "已关闭预览");
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn toggling_preview_on_unsupported_language_is_rejected(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_language_for_test(id, "rust", cx);
+
+            workspace.toggle_preview_for_test(id, window, cx);
+
+            // 不支持的语言不打开面板，并给出明确提示。
+            assert_eq!(workspace.document_preview_enabled_for_test(id), Some(false));
+            assert_eq!(workspace.message_for_test(), "只有 Markdown 文档支持预览");
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn preview_setting_is_kept_per_document(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let first = workspace.active_document_id();
+            let second = workspace.new_tab(window, cx);
+            workspace.set_document_language_for_test(first, "markdown", cx);
+            workspace.set_document_language_for_test(second, "markdown", cx);
+
+            workspace.toggle_preview_for_test(first, window, cx);
+
+            // 两个标签各自记住自己的预览状态。
+            assert_eq!(
+                workspace.document_preview_enabled_for_test(first),
+                Some(true)
+            );
+            assert_eq!(
+                workspace.document_preview_enabled_for_test(second),
+                Some(false)
+            );
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn toggling_preview_does_not_mark_document_as_dirty(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_language_for_test(id, "markdown", cx);
+            workspace.set_document_value(id, "# 标题", window, cx);
+            let revision = workspace.document_revision_for_test(id);
+
+            workspace.toggle_preview_for_test(id, window, cx);
+
+            // 预览是显示设置，不推进修订，也不影响未保存状态。
+            assert_eq!(workspace.document_revision_for_test(id), revision);
+            assert!(workspace.document_is_dirty(id));
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn markdown_preview_panel_appears_only_after_toggling_it_on(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_language_for_test(id, "markdown", cx);
+            workspace.set_document_value(id, "# 标题\n\n正文", window, cx);
+        });
+        window.render_frame(cx);
+
+        // 还没打开预览时，画面里没有预览面板。
+        assert!(
+            window.try_find_by_label("Markdown 预览").is_none(),
+            "预览面板不应在切换前出现"
+        );
+
+        let id = view.read(cx).active_document_id();
+        view.update(cx, |workspace, cx| {
+            workspace.toggle_preview_for_test(id, window, cx);
+        });
+        window.render_frame(cx);
+
+        // 打开后预览面板确实被渲染出来。
+        let panel = window.find_by_label("Markdown 预览");
+        assert!(panel.visible());
+        assert!(panel.bounds().size.width > px(0.));
+    })
+    .unwrap();
 }

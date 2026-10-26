@@ -5864,6 +5864,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "jsonrepair",
+ "markdown",
  "regex",
  "serde_json",
  "tempfile",

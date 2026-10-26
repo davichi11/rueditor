@@ -15,9 +15,9 @@ use workspace::Workspace;
 /// 启动文本编辑器主窗口。
 pub(crate) fn run() {
     application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(assets::Assets)
         .run(|cx| {
-            gpui_kit::init(cx);
+            init(cx);
             cx.bind_keys(shell::key_bindings());
             shell::set_app_menus(cx);
             let window_options = shell::window_options(cx);
@@ -32,9 +32,9 @@ pub(crate) fn run() {
                     });
                     cx.new(|cx| Root::new(workspace, window, cx))
                 })
-                .expect("无法打开文本编辑器");
+                    .expect("无法打开文本编辑器");
             })
-            .detach();
+                .detach();
             cx.activate(true);
         });
 }
@@ -60,7 +60,7 @@ mod shell_tests {
     fn primary_application_shortcuts_use_secondary_modifier() {
         let bindings = super::shell::key_bindings();
 
-        assert_eq!(bindings.len(), 17);
+        assert_eq!(bindings.len(), 18);
         assert!(bindings[..10].iter().all(|binding| {
             binding
                 .keystrokes()

@@ -41,6 +41,10 @@ pub(super) struct EditorSettings {
     pub(super) auto_close: bool,
     /// 一个 Tab 对应的空格数。当前始终使用空格，不插入硬 Tab。
     pub(super) tab_size: usize,
+    /// 是否在编辑器右侧显示 Markdown 预览面板。
+    ///
+    /// 只有 Markdown 文档会真正显示这个面板；其他语言打开时会给出提示。
+    pub(super) show_preview: bool,
 }
 
 impl Default for EditorSettings {
@@ -52,6 +56,7 @@ impl Default for EditorSettings {
             smart_indent: true,
             auto_close: true,
             tab_size: 2,
+            show_preview: false,
         }
     }
 }

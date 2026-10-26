@@ -35,6 +35,7 @@ actions!(
         ToggleShowWhitespaces,
         ToggleSmartIndent,
         ToggleAutoClose,
+        TogglePreview,
         SetTabSize2,
         SetTabSize4,
         SetTabSize8,
@@ -543,6 +544,13 @@ pub(super) fn is_json_path(path: Option<&std::path::Path>) -> bool {
         .is_some_and(|extension| {
             matches!(extension.to_ascii_lowercase().as_str(), "json" | "jsonl")
         })
+}
+
+/// 判断当前语言是否支持预览面板。
+///
+/// 目前只有 Markdown 有对应的渲染器，其他语言打开预览会提示不可用。
+pub(super) fn supports_preview(language: &str) -> bool {
+    language == "markdown"
 }
 
 /// JSON 格式化的结果，同时标记是否经过了容错修复。

@@ -11,8 +11,10 @@ use gpui_kit::component::{
     ActiveTheme, IconName, Sizable, StyledExt, WindowExt as _,
     button::{Button, ButtonVariants},
     input::{Editor, EditorState, Escape, Input, InputEvent, InputState, Replace, Search},
+    resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
     tab::{Tab, TabBar},
+    text::TextView,
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -25,8 +27,9 @@ use editor::{
     OutdentSelection, Quit, ReplaceAllMatches, ReplaceCurrent, Save, SaveAs, SetCss, SetHtml,
     SetJavaScript, SetJson, SetMarkdown, SetPlaintext, SetPython, SetRust, SetTabSize2,
     SetTabSize4, SetTabSize8, SetToml, SetTsx, SetTypeScript, SetYaml, ShowAbout, ToggleAutoClose,
-    ToggleCaseSensitive, ToggleFolding, ToggleLineNumbers, ToggleRegex, ToggleShowWhitespaces,
-    ToggleSmartIndent, ToggleSoftWrap, ToggleWholeWord, TrimTrailingWhitespace, UppercaseSelection,
+    ToggleCaseSensitive, ToggleFolding, ToggleLineNumbers, TogglePreview, ToggleRegex,
+    ToggleShowWhitespaces, ToggleSmartIndent, ToggleSoftWrap, ToggleWholeWord,
+    TrimTrailingWhitespace, UppercaseSelection,
 };
 
 /// 一次只改文档设置里的一项，避免切换时把其他项重置成默认值。
@@ -38,6 +41,7 @@ enum SettingChange {
     SmartIndent(bool),
     AutoClose(bool),
     TabSize(usize),
+    Preview(bool),
 }
 
 /// 把文档设置整份写进编辑器实体。切换标签时用来恢复该文档自己的显示。
@@ -53,7 +57,7 @@ fn apply_editor_settings(
     state.set_smart_indent(settings.smart_indent, window, cx);
     state.set_auto_close(settings.auto_close, window, cx);
     state.set_tab_size(
-        gpui_kit::base::input::TabSize {
+        base::input::TabSize {
             tab_size: settings.tab_size,
             hard_tabs: false,
         },
@@ -204,9 +208,9 @@ impl Workspace {
                 // 只有正文变化才推进修订，光标移动不会把文档标成未保存。
                 if matches!(event, InputEvent::Change)
                     && let Some(document) = this
-                        .documents
-                        .iter_mut()
-                        .find(|document| document.id == subscribed_id)
+                    .documents
+                    .iter_mut()
+                    .find(|document| document.id == subscribed_id)
                 {
                     document.revision += 1;
                     cx.notify();
@@ -404,7 +408,7 @@ impl Workspace {
             document
                 .editor
                 .update(cx, |state, cx| state.focus(window, cx));
-            window.dispatch_action(Box::new(gpui_kit::component::input::Undo), cx);
+            window.dispatch_action(Box::new(component::input::Undo), cx);
         }
     }
 
@@ -452,7 +456,7 @@ impl Workspace {
             } else {
                 let position = editor::position_for_offset(&value, cursor);
                 state.set_cursor_position(
-                    gpui_kit::component::input::Position::new(position.0 as u32, position.1 as u32),
+                    component::input::Position::new(position.0 as u32, position.1 as u32),
                     window,
                     cx,
                 );
@@ -566,7 +570,7 @@ impl Workspace {
             let (line, character) = editor::position_for_offset(&text, offset);
             document.editor.update(cx, |state, cx| {
                 state.set_cursor_position(
-                    gpui_kit::component::input::Position::new(line as u32, character as u32),
+                    component::input::Position::new(line as u32, character as u32),
                     window,
                     cx,
                 )
@@ -596,6 +600,24 @@ impl Workspace {
     #[cfg(test)]
     pub(crate) fn message_for_test(&self) -> &str {
         &self.message
+    }
+
+    /// 测试用的预览开关查询入口。
+    #[cfg(test)]
+    pub(super) fn document_preview_enabled_for_test(&self, id: DocumentId) -> Option<bool> {
+        self.document(id)
+            .map(|document| document.settings.show_preview)
+    }
+
+    /// 测试用的预览开关入口。
+    #[cfg(test)]
+    pub(crate) fn toggle_preview_for_test(
+        &mut self,
+        id: DocumentId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_preview(id, window, cx);
     }
 
     /// 按 `行` 或 `行:列` 跳转。行号、列号都从 1 开始，列按字符而不是字节计数。
@@ -629,7 +651,7 @@ impl Workspace {
                 }
                 editor.update(cx, |state, cx| {
                     state.set_cursor_position(
-                        gpui_kit::component::input::Position::new(line as u32, character as u32),
+                        component::input::Position::new(line as u32, character as u32),
                         window,
                         cx,
                     )
@@ -643,7 +665,7 @@ impl Workspace {
                     editor::TextCommandError::LineOutOfRange => "行号超出范围",
                     _ => "请输入有效的行号",
                 }
-                .into();
+                    .into();
                 cx.notify();
                 false
             }
@@ -725,6 +747,14 @@ impl Workspace {
                     true
                 }
             }
+            SettingChange::Preview(value) => {
+                if document.settings.show_preview == value {
+                    false
+                } else {
+                    document.settings.show_preview = value;
+                    true
+                }
+            }
         };
         if !changed {
             return;
@@ -737,12 +767,14 @@ impl Workspace {
             SettingChange::SmartIndent(value) => state.set_smart_indent(value, window, cx),
             SettingChange::AutoClose(value) => state.set_auto_close(value, window, cx),
             SettingChange::TabSize(value) => state.set_tab_size(
-                gpui_kit::base::input::TabSize {
+                base::input::TabSize {
                     tab_size: value,
                     hard_tabs: false,
                 },
                 cx,
             ),
+            // 预览面板不改变编辑器本身的状态。
+            SettingChange::Preview(_) => {}
         });
         cx.notify();
     }
@@ -760,6 +792,28 @@ impl Workspace {
             return;
         };
         self.set_document_setting(id, make_change(!current), window, cx);
+    }
+
+    /// 切换 Markdown 预览面板。
+    ///
+    /// 预览只对 Markdown 文档有意义，其他语言会给出提示并且不打开面板。
+    fn toggle_preview(&mut self, id: DocumentId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(document) = self.document(id) else {
+            return;
+        };
+        if !editor::supports_preview(document.language.as_ref()) {
+            self.message = "只有 Markdown 文档支持预览".into();
+            cx.notify();
+            return;
+        }
+        let enabled = !document.settings.show_preview;
+        self.set_document_setting(id, SettingChange::Preview(enabled), window, cx);
+        self.message = if enabled {
+            "已打开预览".into()
+        } else {
+            "已关闭预览".into()
+        };
+        cx.notify();
     }
 
     /// 从当前位置向后查找下一个匹配，到末尾后绕回开头。
@@ -1262,29 +1316,8 @@ impl Workspace {
                     cx.notify();
                 }
             });
-            for path in paths {
-                let weak = this.clone();
-                let task = cx.background_spawn(async move {
-                    let result = file_io::load(&path);
-                    (path, result)
-                });
-                cx.spawn(async move |cx| {
-                    let (path, result) = task.await;
-                    let _ = weak.update_in(cx, |this, window, cx| {
-                        // 期间又发起了新的打开，这份结果已经过期。
-                        if this.loading_request_id != request_id {
-                            return;
-                        }
-                        this.install_one_result(path, result, window, cx);
-                        this.pending_loads = this.pending_loads.saturating_sub(1);
-                        this.loading = this.pending_loads != 0;
-                        cx.notify();
-                    });
-                })
-                .detach();
-            }
-        })
-        .detach();
+            iter_and_load_files(paths, request_id, this, cx);
+        }).detach();
         cx.notify();
     }
 
@@ -1383,7 +1416,7 @@ impl Workspace {
                                 expected.as_ref(),
                             )
                         })
-                        .await
+                            .await
                     },
                 ),
                 Ok(None) => None,
@@ -1405,7 +1438,7 @@ impl Workspace {
                             document.disk_fingerprint = file_io::fingerprint(
                                 document.path.as_deref().expect("saved path must exist"),
                             )
-                            .ok();
+                                .ok();
                             // 保存期间又编辑过时修订已经前进，不能接着关闭或退出。
                             !document.is_dirty()
                         } else {
@@ -1431,7 +1464,7 @@ impl Workspace {
                 cx.notify();
             });
         })
-        .detach();
+            .detach();
         cx.notify();
     }
 
@@ -1486,7 +1519,7 @@ impl Workspace {
                 cx.notify();
             });
         })
-        .detach();
+            .detach();
         cx.notify();
     }
 
@@ -1564,7 +1597,7 @@ impl Workspace {
                 cx.notify();
             });
         })
-        .detach();
+            .detach();
         cx.notify();
     }
 
@@ -1635,30 +1668,67 @@ impl Workspace {
         self.loading = true;
         self.pending_loads = paths.len();
         cx.spawn_in(window, async move |this, cx| {
-            for path in paths {
-                let weak = this.clone();
-                let task = cx.background_spawn(async move {
-                    let result = file_io::load(&path);
-                    (path, result)
-                });
-                cx.spawn(async move |cx| {
-                    let (path, result) = task.await;
-                    let _ = weak.update_in(cx, |this, window, cx| {
-                        // 期间又发起了新的打开，这份结果已经过期。
-                        if this.loading_request_id != request_id {
-                            return;
-                        }
-                        this.install_one_result(path, result, window, cx);
-                        this.pending_loads = this.pending_loads.saturating_sub(1);
-                        this.loading = this.pending_loads != 0;
-                        cx.notify();
-                    });
-                })
-                .detach();
-            }
-        })
-        .detach();
+            // 遍历 paths 中的每个路径，并调用 file_io::load 函数加载文件。
+            iter_and_load_files(paths, request_id, this, cx);
+        }).detach();
         cx.notify();
+    }
+
+    /// 构造 Markdown 预览面板。
+    ///
+    /// 预览内容跟随编辑器正文实时刷新；正文为空时给出一段占位提示，
+    /// 避免面板看起来像没有加载出来。
+    fn build_preview_panel(&self, document: &Document, cx: &App) -> AnyElement {
+        let text = document.editor.read(cx).value();
+        let body = if text.trim().is_empty() {
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("没有可预览的内容")
+                .into_any_element()
+        } else {
+            // 元素 ID 带上文档 ID，切换标签时预览状态各自独立保留。
+            TextView::markdown(format!("markdown-preview-{}", document.id.0), text.clone())
+                .scrollable(true)
+                .selectable(true)
+                .into_any_element()
+        };
+
+        div()
+            .id(format!("markdown-preview-panel-{}", document.id.0))
+            .aria_label("Markdown 预览")
+            .size_full()
+            .overflow_hidden()
+            .bg(cx.theme().background)
+            .px_6()
+            .py_4()
+            .child(body)
+            // 让 UI 测试能观测到这个面板；普通构建下这一步不做任何事。
+            .test_support()
+            .into_any_element()
+    }
+}
+
+fn iter_and_load_files(paths: Vec<PathBuf>, request_id: u64, this: WeakEntity<Workspace>, cx: &mut AsyncWindowContext) {
+    for path in paths {
+        let weak = this.clone();
+        let task = cx.background_spawn(async move {
+            let result = file_io::load(&path);
+            (path, result)
+        });
+        cx.spawn(async move |cx| {
+            let (path, result) = task.await;
+            let _ = weak.update_in(cx, |this, window, cx| {
+                // 期间又发起了新的打开，这份结果已经过期。
+                if this.loading_request_id != request_id {
+                    return;
+                }
+                this.install_one_result(path, result, window, cx);
+                this.pending_loads = this.pending_loads.saturating_sub(1);
+                this.loading = this.pending_loads != 0;
+                cx.notify();
+            });
+        }).detach();
     }
 }
 
@@ -1803,7 +1873,7 @@ impl Render for Workspace {
                         .title("跳转到行")
                         .content(move |content, _, _| content.child(Input::new(&input_for_content)))
                         .button_props(
-                            gpui_kit::component::dialog::DialogButtonProps::default()
+                            component::dialog::DialogButtonProps::default()
                                 .ok_text("跳转")
                                 .show_cancel(true)
                                 .on_ok(move |_, window, app| {
@@ -1904,6 +1974,9 @@ impl Render for Workspace {
                     cx,
                 );
             }))
+            .on_action(cx.listener(|this, _: &TogglePreview, window, cx| {
+                this.toggle_preview(this.active_id(), window, cx);
+            }))
             .on_action(cx.listener(|this, _: &SetTabSize2, window, cx| {
                 this.set_document_setting(this.active_id(), SettingChange::TabSize(2), window, cx);
             }))
@@ -1986,6 +2059,27 @@ impl Render for Workspace {
                     .border_color(cx.theme().border)
                     .child(format!("{}{}", title, if active_dirty { " *" } else { "" }))
                     .child(div().flex_1())
+                    .when_some(
+                        // 只有支持预览的语言才显示这个按钮，避免给不可用的操作入口。
+                        active.filter(|document| {
+                            editor::supports_preview(document.language.as_ref())
+                        }),
+                        |bar, document| {
+                            let enabled = document.settings.show_preview;
+                            bar.child(
+                                Button::new("toggle-preview")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::BookOpen)
+                                    .selected(enabled)
+                                    .accessibility_label("切换 Markdown 预览")
+                                    .tooltip("切换 Markdown 预览")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_preview(this.active_id(), window, cx);
+                                    })),
+                            )
+                        },
+                    )
                     .child(
                         div()
                             .text_xs()
@@ -2033,7 +2127,7 @@ impl Render for Workspace {
                             &document.search.query,
                             document.search.options,
                         )
-                        .ok()
+                            .ok()
                     })
                     .map_or(0, |ranges| ranges.len());
                 let id = active_id;
@@ -2185,11 +2279,23 @@ impl Render for Workspace {
                     .flex_1()
                     .min_h_0()
                     .child(if let Some(document) = active {
-                        Editor::new(&document.editor)
+                        let editor_panel = Editor::new(&document.editor)
                             .aria_label("文档正文")
                             .readonly(!can_edit)
                             .h(relative(1.))
-                            .into_any_element()
+                            .into_any_element();
+                        // 预览只在受支持的文档上出现，且由文档自己的设置决定。
+                        let show_preview = document.settings.show_preview
+                            && editor::supports_preview(document.language.as_ref());
+                        if show_preview {
+                            let preview = self.build_preview_panel(document, cx);
+                            h_resizable("markdown-preview-split")
+                                .child(resizable_panel().child(editor_panel))
+                                .child(resizable_panel().child(preview))
+                                .into_any_element()
+                        } else {
+                            editor_panel
+                        }
                     } else {
                         div().size_full().into_any_element()
                     }),

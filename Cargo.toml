@@ -26,6 +26,8 @@ regex = "1"
 
 [dev-dependencies]
 gpui-kit = { version = "0.8.0", features = ["test-support"] }
+# 预览用的 Markdown 语法树来自 markdown-rs，这里直接复用同一份解析器做断言。
+markdown = "1.0.0"
 
 [[bin]]
 name = "rueditor"
