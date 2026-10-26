@@ -8,7 +8,7 @@ use super::document::{
 use super::{editor, file_io};
 use gpui_kit::base::Selectable;
 use gpui_kit::component::{
-    ActiveTheme, IconName, Root, Sizable, StyledExt, WindowExt as _,
+    ActiveTheme, IconName, Sizable, StyledExt, WindowExt as _,
     button::{Button, ButtonVariants},
     input::{Editor, EditorState, Escape, Input, InputEvent, InputState, Replace, Search},
     status_bar::StatusBar,
@@ -1664,7 +1664,7 @@ impl Workspace {
 
 impl Render for Workspace {
     /// 绘制标题、标签、查找面板、正文和状态栏，并在这里挂上全部动作。
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_id = self.active_id();
         let active_index = self
             .documents
@@ -2207,8 +2207,5 @@ impl Render for Workspace {
                         self.message.clone()
                     }),
             )
-            .children(Root::render_dialog_layer(window, cx))
-            .children(Root::render_sheet_layer(window, cx))
-            .children(Root::render_notification_layer(window, cx))
     }
 }
