@@ -31,6 +31,31 @@ actions!(
         SetMarkdown,
         SetToml,
         SetYaml,
+        SetXml,
+        SetProperties,
+        SetIni,
+        SetDotenv,
+        SetJsx,
+        SetC,
+        SetCpp,
+        SetJava,
+        SetGo,
+        SetCSharp,
+        SetKotlin,
+        SetSwift,
+        SetPhp,
+        SetRuby,
+        SetLua,
+        SetScala,
+        SetElixir,
+        SetZig,
+        SetSql,
+        SetBash,
+        SetMake,
+        SetCMake,
+        SetProto,
+        SetGraphql,
+        SetDiff,
         ToggleFolding,
         ToggleLineNumbers,
         ToggleSoftWrap,
@@ -72,12 +97,37 @@ pub(super) const LANGUAGE_OPTIONS: &[(&str, &str)] = &[
     ("javascript", "JavaScript"),
     ("typescript", "TypeScript"),
     ("tsx", "TSX"),
+    ("jsx", "JSX"),
     ("json", "JSON"),
     ("html", "HTML"),
     ("css", "CSS"),
     ("markdown", "Markdown"),
     ("toml", "TOML"),
     ("yaml", "YAML"),
+    ("xml", "XML"),
+    ("properties", "Properties"),
+    ("ini", "INI"),
+    ("dotenv", "Dotenv"),
+    ("c", "C"),
+    ("cpp", "C++"),
+    ("java", "Java"),
+    ("go", "Go"),
+    ("csharp", "C#"),
+    ("kotlin", "Kotlin"),
+    ("swift", "Swift"),
+    ("php", "PHP"),
+    ("ruby", "Ruby"),
+    ("lua", "Lua"),
+    ("scala", "Scala"),
+    ("elixir", "Elixir"),
+    ("zig", "Zig"),
+    ("sql", "SQL"),
+    ("bash", "Shell / Bash"),
+    ("make", "Makefile"),
+    ("cmake", "CMake"),
+    ("proto", "Protocol Buffers"),
+    ("graphql", "GraphQL"),
+    ("diff", "Diff"),
 ];
 
 /// 搜索输入或匹配过程中的可恢复错误。
@@ -516,25 +566,126 @@ pub(super) fn language_label(language: &str) -> &'static str {
 
 /// 根据文件扩展名选择 Tree-sitter 语言；未知类型回退到纯文本。
 pub(super) fn language_for_path(path: &std::path::Path) -> &'static str {
+    // Uppercase .C is the conventional C++ suffix; check before folding case.
+    if path.extension().and_then(|value| value.to_str()) == Some("C") {
+        return "cpp";
+    }
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if filename == ".env" || filename.starts_with(".env.") {
+        return "dotenv";
+    }
+    match filename.as_str() {
+        "makefile" | "gnumakefile" | "bsdmakefile" => return "make",
+        "cmakelists.txt" => return "cmake",
+        "gemfile" | "rakefile" | "guardfile" | "vagrantfile" | "podfile" | "fastfile"
+        | "brewfile" => return "ruby",
+        ".bashrc" | ".bash_profile" | ".bash_login" | ".bash_logout" | ".profile" | ".zshrc"
+        | ".zshenv" | ".zprofile" | ".zlogin" | ".zlogout" | "configure" => return "bash",
+        _ => {}
+    }
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
     match extension.as_str() {
+        "c" | "h" => "c",
+        "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "h++" | "ipp" | "tpp" | "ixx" => {
+            "cpp"
+        }
+        "java" => "java",
+        "go" => "go",
+        "cs" | "csx" => "csharp",
+        "kt" | "kts" => "kotlin",
+        "swift" => "swift",
+        "php" | "php3" | "php4" | "php5" | "php7" | "php8" | "phtml" => "php",
+        "rb" | "rake" | "gemspec" | "ru" => "ruby",
+        "lua" => "lua",
+        "scala" | "sc" | "sbt" => "scala",
+        "ex" | "exs" => "elixir",
+        "zig" | "zon" => "zig",
+        "sql" => "sql",
+        "sh" | "bash" | "zsh" | "ksh" => "bash",
+        "mk" | "mak" => "make",
+        "cmake" => "cmake",
+        "proto" => "proto",
+        "graphql" | "gql" | "graphqls" => "graphql",
+        "diff" | "patch" => "diff",
         "rs" => "rust",
-        "py" => "python",
+        "py" | "pyw" | "pyi" => "python",
         "js" | "mjs" | "cjs" => "javascript",
-        "ts" => "typescript",
+        "ts" | "mts" | "cts" => "typescript",
         "tsx" => "tsx",
-        "jsx" => "javascript",
+        "jsx" => "jsx",
         "html" | "htm" => "html",
         "css" => "css",
-        "md" | "markdown" | "mdown" => "markdown",
-        "json" | "jsonl" => "json",
+        "md" | "markdown" | "mdown" | "mdx" => "markdown",
+        "json" | "jsonl" | "jsonc" | "ipynb" => "json",
         "yaml" | "yml" => "yaml",
         "toml" => "toml",
+        "xml" | "svg" | "xsd" | "xsl" | "xslt" | "plist" => "xml",
+        "properties" => "properties",
+        "ini" | "cfg" => "ini",
+        "env" => "dotenv",
         "csv" | "tsv" | "txt" | "text" => "plaintext",
+        _ => "plaintext",
+    }
+}
+
+/// Prefer an explicit known file type; extensionless scripts may declare an
+/// interpreter in their first line. No command is ever executed.
+pub(super) fn language_for_document(path: Option<&std::path::Path>, text: &str) -> &'static str {
+    if let Some(path) = path {
+        let language = language_for_path(path);
+        if language != "plaintext" || path.extension().is_some() {
+            return language;
+        }
+    }
+    let Some(command) = text
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("#!"))
+    else {
+        return "plaintext";
+    };
+    let mut words = command.split_whitespace();
+    let Some(program) = words.next() else {
+        return "plaintext";
+    };
+    let basename = |word: &str| word.rsplit('/').next().unwrap_or("").to_owned();
+    let interpreter = if basename(program) == "env" {
+        // env -S splits the remaining command. Skip env options/assignments,
+        // then inspect only its command, never later arguments.
+        let mut command = None;
+        while let Some(word) = words.next() {
+            if matches!(word, "-u" | "--unset" | "-C" | "--chdir") {
+                words.next();
+            } else if !word.starts_with('-') && !word.contains('=') {
+                command = Some(basename(word));
+                break;
+            }
+        }
+        command.unwrap_or_default()
+    } else {
+        basename(program)
+    };
+    match interpreter.as_str() {
+        "python" | "python2" | "python3" => "python",
+        name if name.starts_with("python3.") && name[8..].chars().all(|c| c.is_ascii_digit()) => {
+            "python"
+        }
+        "node" | "nodejs" => "javascript",
+        "ruby" => "ruby",
+        "php" => "php",
+        "lua" | "lua5.1" | "lua5.2" | "lua5.3" | "lua5.4" => "lua",
+        "sh" | "bash" | "zsh" | "ksh" | "dash" => "bash",
+        "elixir" => "elixir",
+        "swift" => "swift",
         _ => "plaintext",
     }
 }

@@ -19,11 +19,38 @@ gpui-kit = { version = "0.8.0", features = [
     "tree-sitter-markdown",
     "tree-sitter-toml",
     "tree-sitter-yaml",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-java",
+    "tree-sitter-go",
+    "tree-sitter-csharp",
+    "tree-sitter-kotlin",
+    "tree-sitter-swift",
+    "tree-sitter-php",
+    "tree-sitter-ruby",
+    "tree-sitter-lua",
+    "tree-sitter-scala",
+    "tree-sitter-elixir",
+    "tree-sitter-zig",
+    "tree-sitter-sql",
+    "tree-sitter-bash",
+    "tree-sitter-make",
+    "tree-sitter-cmake",
+    "tree-sitter-proto",
+    "tree-sitter-graphql",
+    "tree-sitter-diff",
 ] }
 jsonrepair = "0.1.0"
 serde_json = "1"
 regex = "1"
 url = "2"
+tree-sitter = "0.26"
+tree-sitter-xml = "0.7"
+tree-sitter-properties = "0.3"
+tree-sitter-ini = "1.4"
+tree-sitter-bash = "0.25"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-swift = "0.7"
 
 [dev-dependencies]
 gpui-kit = { version = "0.8.0", features = ["test-support"] }

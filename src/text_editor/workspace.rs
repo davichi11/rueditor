@@ -27,12 +27,14 @@ use std::path::{Path, PathBuf};
 use editor::{
     Close, CloseSearchPanel, DeleteLine, DuplicateLine, FindNext, FindPrevious, Format, GotoLine,
     IndentSelection, LowercaseSelection, MoveLineDown, MoveLineUp, New, Open, OpenSearchPanel,
-    OutdentSelection, Quit, ReplaceAllMatches, ReplaceCurrent, Save, SaveAs, SetCss, SetHtml,
-    SetJavaScript, SetJson, SetMarkdown, SetPlaintext, SetPython, SetRust, SetTabSize2,
-    SetTabSize4, SetTabSize8, SetToml, SetTsx, SetTypeScript, SetYaml, ShowAbout, ToggleAutoClose,
-    ToggleCaseSensitive, ToggleFolding, ToggleLineNumbers, TogglePreview, ToggleRegex,
-    ToggleShowWhitespaces, ToggleSmartIndent, ToggleSoftWrap, ToggleWholeWord,
-    TrimTrailingWhitespace, UppercaseSelection,
+    OutdentSelection, Quit, ReplaceAllMatches, ReplaceCurrent, Save, SaveAs, SetBash, SetC,
+    SetCMake, SetCSharp, SetCpp, SetCss, SetDiff, SetDotenv, SetElixir, SetGo, SetGraphql, SetHtml,
+    SetIni, SetJava, SetJavaScript, SetJson, SetJsx, SetKotlin, SetLua, SetMake, SetMarkdown,
+    SetPhp, SetPlaintext, SetProperties, SetProto, SetPython, SetRuby, SetRust, SetScala, SetSql,
+    SetSwift, SetTabSize2, SetTabSize4, SetTabSize8, SetToml, SetTsx, SetTypeScript, SetXml,
+    SetYaml, SetZig, ShowAbout, ToggleAutoClose, ToggleCaseSensitive, ToggleFolding,
+    ToggleLineNumbers, TogglePreview, ToggleRegex, ToggleShowWhitespaces, ToggleSmartIndent,
+    ToggleSoftWrap, ToggleWholeWord, TrimTrailingWhitespace, UppercaseSelection,
 };
 
 /// 一次只改文档设置里的一项，避免切换时把其他项重置成默认值。
@@ -108,6 +110,7 @@ pub(super) struct Workspace {
 impl Workspace {
     /// 创建包含一个未命名文档的新工作区。
     pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        super::languages::init();
         let focus = cx.focus_handle();
         let search_query = cx.new(|cx| InputState::new(window, cx).placeholder("查找文档内容"));
         let search_replacement = cx.new(|cx| InputState::new(window, cx).placeholder("替换为"));
@@ -183,15 +186,13 @@ impl Workspace {
     ) -> Document {
         let id = DocumentId(self.next_document_id);
         self.next_document_id += 1;
-        let language = path
-            .as_deref()
-            .map(editor::language_for_path)
-            .unwrap_or("plaintext");
+        let language = editor::language_for_document(path.as_deref(), &text);
         let editor = cx.new(|cx| {
-            EditorState::new(window, cx)
+            let mut state = EditorState::new(window, cx)
                 .language(language)
-                .folding(true)
-                .default_value(text)
+                .folding(true);
+            state.set_highlighter_factory(super::syntax::factory(), cx);
+            state.default_value(text)
         });
         let settings = EditorSettings::default();
         editor.update(cx, |state, cx| {
@@ -1114,6 +1115,11 @@ impl Workspace {
         document.folding_enabled = enabled;
         document.editor.update(cx, |state, cx| {
             state.set_folding(enabled, window, cx);
+            if enabled {
+                // Reapply the adapter's cached candidates after edits made
+                // while folding was disabled.
+                state.refresh(cx);
+            }
         });
         cx.notify();
     }
@@ -1969,6 +1975,66 @@ impl Render for Workspace {
                         )
                 });
             }))
+            .on_action(cx.listener(|this, _: &SetC, _, cx| {
+                this.set_document_language(this.active_id(), "c", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetCpp, _, cx| {
+                this.set_document_language(this.active_id(), "cpp", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetJava, _, cx| {
+                this.set_document_language(this.active_id(), "java", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetGo, _, cx| {
+                this.set_document_language(this.active_id(), "go", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetCSharp, _, cx| {
+                this.set_document_language(this.active_id(), "csharp", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetKotlin, _, cx| {
+                this.set_document_language(this.active_id(), "kotlin", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetSwift, _, cx| {
+                this.set_document_language(this.active_id(), "swift", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetPhp, _, cx| {
+                this.set_document_language(this.active_id(), "php", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetRuby, _, cx| {
+                this.set_document_language(this.active_id(), "ruby", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetLua, _, cx| {
+                this.set_document_language(this.active_id(), "lua", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetScala, _, cx| {
+                this.set_document_language(this.active_id(), "scala", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetElixir, _, cx| {
+                this.set_document_language(this.active_id(), "elixir", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetZig, _, cx| {
+                this.set_document_language(this.active_id(), "zig", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetSql, _, cx| {
+                this.set_document_language(this.active_id(), "sql", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetBash, _, cx| {
+                this.set_document_language(this.active_id(), "bash", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetMake, _, cx| {
+                this.set_document_language(this.active_id(), "make", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetCMake, _, cx| {
+                this.set_document_language(this.active_id(), "cmake", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetProto, _, cx| {
+                this.set_document_language(this.active_id(), "proto", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetGraphql, _, cx| {
+                this.set_document_language(this.active_id(), "graphql", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetDiff, _, cx| {
+                this.set_document_language(this.active_id(), "diff", cx);
+            }))
             .on_action(cx.listener(|this, _: &SetPlaintext, _, cx| {
                 this.set_document_language(this.active_id(), "plaintext", cx);
             }))
@@ -2001,6 +2067,21 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &SetToml, _, cx| {
                 this.set_document_language(this.active_id(), "toml", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetXml, _, cx| {
+                this.set_document_language(this.active_id(), "xml", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetProperties, _, cx| {
+                this.set_document_language(this.active_id(), "properties", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetIni, _, cx| {
+                this.set_document_language(this.active_id(), "ini", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetDotenv, _, cx| {
+                this.set_document_language(this.active_id(), "dotenv", cx);
+            }))
+            .on_action(cx.listener(|this, _: &SetJsx, _, cx| {
+                this.set_document_language(this.active_id(), "jsx", cx);
             }))
             .on_action(cx.listener(|this, _: &SetYaml, _, cx| {
                 this.set_document_language(this.active_id(), "yaml", cx);

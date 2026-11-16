@@ -1,6 +1,6 @@
 # Rueditor
 
-Rueditor 是一个参考 Notepad++ 和 CotEditor 的轻量级跨平台文本编辑器，使用 Rust 2024 和 GPUI Kit 0.6.1 构建。项目聚焦于可靠的文本编辑、多文档工作区、语法高亮、代码折叠和常用查找替换流程。
+Rueditor 是一个参考 Notepad++ 和 CotEditor 的轻量级跨平台文本编辑器，使用 Rust 2024 和 GPUI Kit 0.8.0 构建。项目聚焦于可靠的文本编辑、多文档工作区、语法高亮、代码折叠和常用查找替换流程。
 
 ## 当前状态
 
@@ -29,9 +29,15 @@ M0–M5 的核心功能已经实现：
 - JSON 格式化；对部分常见非严格 JSON 内容进行自动修复后格式化。
 - 普通文本格式化：清理行尾空白并统一文件末尾换行。
 - 使用 CotEditor 风格的原生应用菜单栏，按“文件 / 编辑 / 格式 / 显示 / 文本 / 查找 / 窗口 / 帮助”组织操作，避免顶部工具栏拥挤。
-- 文档标签栏保留当前文件和未保存状态；语言类型、编码和换行格式压缩显示在标题信息区和状态栏。
+- 文档标签栏保留当前文件和未保存状态；语言类型、编码、换行格式和缩进信息集中显示在状态栏。
 
-当前语言选择器提供：纯文本、Rust、Python、JavaScript、TypeScript、JSON、HTML、CSS、Markdown、TOML 和 YAML。未知类型回退为纯文本。
+当前语言选择器提供：纯文本、Rust、Python、JavaScript、JSX、TypeScript、TSX、JSON、HTML、CSS、Markdown、TOML、YAML、XML、Properties、INI 和 Dotenv。未知类型回退为纯文本；`.env`、`.env.local`、`.env.production` 等文件自动识别为 Dotenv，`.xml`、`.svg`、`.xsd`、`.xsl`、`.xslt`、`.plist` 使用 XML 语法，`.ini`、`.cfg` 使用 INI 语法。
+
+新增主流编程语言：C、C++、Java、Go、C#、Kotlin、Swift、PHP、Ruby、Lua、Scala、Elixir、Zig、SQL、Shell/Bash；构建与接口文件支持 Makefile、CMake、Protocol Buffers、GraphQL 和 Diff。所有类型均可通过“文本 → 语言”手动切换。
+
+文件类型检测优先使用扩展名及特殊文件名，包括 C/C++ 头文件、`.pyi/.pyw`、`.mts/.cts`、`.jsonc/.ipynb`、Makefile、CMakeLists.txt、Gemfile/Rakefile、`.bashrc/.zshrc` 等。约定 `.h` 使用 C，`.hpp/.hh/.hxx` 及大写 `.C` 使用 C++；无扩展名脚本按首行 shebang 识别 Python、Node.js、Ruby、PHP、Lua、Shell、Elixir 和 Swift，支持 `/usr/bin/env` 与 `env -S`。显式扩展名优先于 shebang，未知类型回退为纯文本。Shell 使用 Bash 语法提供通用高亮；MDX 使用 Markdown 语法，暂不提供 JSX 混合解析。
+
+高亮区分函数、方法、参数、属性、JSX 标签、字符串转义与模板插值，并提供统一的浅色/深色语法配色。JS/TS/JSX/TSX 按真实块结构折叠；Python 按函数、类与缩进分支折叠，收起时完整隐藏块体并保留内层折叠状态。
 
 查找和替换支持普通文本与正则表达式模式，并提供大小写匹配、全词匹配、当前替换和全部替换。正则替换支持捕获组引用；无效正则表达式不会写回文档。普通文本搜索继续复用 GPUI Kit 的编辑器能力。
 

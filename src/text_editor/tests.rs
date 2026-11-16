@@ -251,9 +251,9 @@ fn detects_m4_languages_from_common_extensions() {
         ("Cargo.toml", "toml"),
         ("config.yaml", "yaml"),
         ("component.tsx", "tsx"),
-        ("main.go", "plaintext"),
-        ("main.java", "plaintext"),
-        ("main.cpp", "plaintext"),
+        ("main.go", "go"),
+        ("main.java", "java"),
+        ("main.cpp", "cpp"),
         ("unknown.bin", "plaintext"),
     ] {
         assert_eq!(language_for_path(Path::new(path)), language, "{path}");
@@ -1623,4 +1623,1039 @@ async fn markdown_preview_panel_appears_only_after_toggling_it_on(cx: &mut TestA
         assert!(panel.bounds().size.width > px(0.));
     })
     .unwrap();
+}
+
+#[test]
+fn detects_configuration_languages_and_dotenv_variants() {
+    for (path, expected) in [
+        ("pom.xml", "xml"),
+        ("icon.svg", "xml"),
+        ("App.config.XML", "xml"),
+        ("messages.properties", "properties"),
+        ("desktop.ini", "ini"),
+        ("settings.cfg", "ini"),
+        (".env", "dotenv"),
+        (".env.local", "dotenv"),
+        (".env.production.local", "dotenv"),
+        ("service.env", "dotenv"),
+        ("component.jsx", "jsx"),
+        (".environment", "plaintext"),
+        ("notes.env.txt", "plaintext"),
+    ] {
+        assert_eq!(language_for_path(Path::new(path)), expected, "{path}");
+    }
+}
+
+/// Only the requested semantic capture gets a color, making missing or
+/// shadowed captures observable through the same style runs the editor paints.
+struct CaptureStyle(&'static str);
+impl gpui_kit::base::input::HighlightStyleResolver for CaptureStyle {
+    fn style(&self, name: &str) -> Option<gpui_kit::HighlightStyle> {
+        (name == self.0).then(|| gpui_kit::HighlightStyle {
+            color: Some(gpui_kit::rgb(0x123456).into()),
+            ..Default::default()
+        })
+    }
+}
+
+fn assert_syntax_token(language: &str, source: &str, token: &str, capture: &'static str) {
+    assert_syntax_with_resolver(language, source, token, capture, &CaptureStyle(capture));
+}
+
+fn assert_syntax_with_resolver(
+    language: &str,
+    source: &str,
+    token: &str,
+    capture: &str,
+    resolver: &dyn gpui_kit::base::input::HighlightStyleResolver,
+) {
+    use gpui_kit::component::highlighter::SyntaxHighlighter;
+    super::super::languages::init();
+    let mut highlighter = SyntaxHighlighter::new(language);
+    highlighter.update(None, &source.into(), None);
+    let start = source.find(token).expect("fixture contains token");
+    let end = start + token.len();
+    let runs = highlighter.styles(&(start..end), resolver);
+    let mut covered = start;
+    for (range, style) in &runs {
+        assert_eq!(
+            range.start, covered,
+            "{language}: missing coverage for {token:?}"
+        );
+        assert_eq!(
+            style.color,
+            Some(gpui_kit::rgb(0x123456).into()),
+            "{language}: {token:?} should be {capture}, got {runs:?}"
+        );
+        covered = range.end;
+    }
+    assert_eq!(
+        covered, end,
+        "{language}: incomplete coverage for {token:?}"
+    );
+}
+
+#[test]
+fn javascript_highlights_jsx_tags_and_attributes() {
+    let source = "const view = <Panel title=\"你好\">Hello</Panel>;";
+    assert_syntax_token("javascript", source, "Panel", "tag");
+    assert_syntax_token("javascript", source, "title", "attribute");
+}
+
+#[test]
+fn javascript_highlights_escapes_and_template_expressions() {
+    assert_syntax_token(
+        "javascript",
+        r#"const text = "hi\n";"#,
+        r"\n",
+        "string.escape",
+    );
+    assert_syntax_token(
+        "javascript",
+        "const msg = `Hi ${user.name}`;",
+        "user",
+        "variable",
+    );
+    assert_syntax_token(
+        "javascript",
+        "const msg = `Hi ${user.name}`;",
+        "name",
+        "property",
+    );
+}
+
+#[test]
+fn new_languages_produce_semantic_highlights() {
+    for (language, source, token, capture) in [
+        ("xml", "<root name=\"你好\"/>", "root", "tag"),
+        (
+            "properties",
+            "server.port=8080\n",
+            "server.port",
+            "property",
+        ),
+        ("ini", "[server]\nport=8080\n", "server", "title"),
+        (
+            "dotenv",
+            "export API_URL=\"https://example.test\"\n",
+            "API_URL",
+            "property",
+        ),
+    ] {
+        assert_syntax_token(language, source, token, capture);
+    }
+}
+
+#[test]
+fn all_language_queries_compile_against_their_actual_grammar() {
+    use gpui_kit::component::highlighter::LanguageRegistry;
+    super::super::languages::init();
+    for (name, _) in super::LANGUAGE_OPTIONS
+        .iter()
+        .filter(|(name, _)| *name != "plaintext")
+    {
+        let config = LanguageRegistry::singleton().language(name).expect(name);
+        let grammar = config.language.as_ref().expect(name);
+        let query = format!(
+            "{}\n{}\n{}",
+            config.injections, config.locals, config.highlights
+        );
+        tree_sitter::Query::new(grammar, &query).unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
+}
+
+#[test]
+fn ecmascript_highlights_specific_roles_before_generic_identifiers() {
+    for language in ["javascript", "jsx", "typescript", "tsx"] {
+        for (source, token, capture) in [
+            (
+                "function greet(person) { return person; }",
+                "greet",
+                "function",
+            ),
+            ("const greet = (person) => person;", "greet", "function"),
+            ("service.fetchData();", "fetchData", "function.method"),
+            ("const now = new Clock();", "Clock", "constructor"),
+            ("const pattern = /ab+/gi;", "/ab+/gi", "string.regex"),
+            ("const message = `你好 ${user.name}`;", "user", "variable"),
+            ("const message = `你好 ${user.name}`;", "name", "property"),
+            (r#"const message = "你好\n";"#, r"\n", "string.escape"),
+        ] {
+            assert_syntax_token(language, source, token, capture);
+        }
+    }
+}
+
+#[test]
+fn typescript_highlights_typed_parameters_and_tsx_attributes() {
+    assert_syntax_token(
+        "typescript",
+        "function greet(person: string) {}",
+        "person",
+        "variable.parameter",
+    );
+    assert_syntax_token(
+        "tsx",
+        "const view = <Panel title=\"Hello\"/>;",
+        "Panel",
+        "tag",
+    );
+    assert_syntax_token(
+        "tsx",
+        "const view = <Panel title=\"Hello\"/>;",
+        "title",
+        "attribute",
+    );
+}
+
+#[test]
+fn language_samples_keep_keywords_strings_and_comments_distinct() {
+    for (language, source, token, capture) in [
+        ("rust", "fn main() {}", "fn", "keyword"),
+        ("python", "def main(): pass", "def", "keyword"),
+        ("json", r#"{"name": "你好"}"#, r#""你好""#, "string"),
+        ("html", "<div>Hello</div>", "div", "tag"),
+        (
+            "css",
+            "/* comment */\nbody { color: red; }",
+            "/* comment */",
+            "comment",
+        ),
+        (
+            "toml",
+            "# comment\nname = \"hello\"\n",
+            "# comment",
+            "comment",
+        ),
+        ("yaml", "# comment\nname: hello\n", "# comment", "comment"),
+        (
+            "xml",
+            "<!-- comment -->\n<root/>",
+            "<!-- comment -->",
+            "comment",
+        ),
+        ("xml", "<root>你好 &amp; 世界</root>", "&amp;", "constant"),
+        (
+            "properties",
+            "# comment\nname=hello\n",
+            "# comment",
+            "comment",
+        ),
+        ("properties", "name=hello\\nworld\n", "\\n", "string.escape"),
+        (
+            "ini",
+            "; comment\n[server]\nport=8080\n",
+            "; comment",
+            "comment",
+        ),
+        ("ini", "[server]\nport=8080\n", "8080", "string"),
+        ("dotenv", "# comment\nAPI=hello\n", "# comment", "comment"),
+        (
+            "dotenv",
+            "API=https://example.test\n",
+            "https://example.test",
+            "string",
+        ),
+        (
+            "dotenv",
+            "API=\"${HOST}/api\"\n",
+            "HOST",
+            "variable.special",
+        ),
+    ] {
+        assert_syntax_token(language, source, token, capture);
+    }
+}
+
+#[gpui_kit::test]
+async fn folding_tracks_python_headers_and_js_blocks_instead_of_wrapper_nodes(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+    for (language, source, expected) in [
+        (
+            "python",
+            "def outer():\n    value = 1\n    if value:\n        print(value)\n    return value\n",
+            vec![(0, true), (1, false), (2, true)],
+        ),
+        (
+            "javascript",
+            "const result = items\n    .map(item => {\n        return item;\n    })\n    .filter(Boolean);\n",
+            vec![(0, false), (1, true)],
+        ),
+    ] {
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |workspace, cx| {
+                let id = workspace.active_document_id();
+                workspace.set_document_language_for_test(id, language, cx);
+                workspace.set_document_value(id, source, window, cx);
+            });
+            window.render_frame(cx);
+            let workspace = view.read(cx);
+            for (line, expected) in expected {
+                assert_eq!(
+                    workspace.document_fold_candidate_for_test(
+                        workspace.active_document_id(),
+                        line,
+                        cx
+                    ),
+                    Some(expected),
+                    "{language} line {line}"
+                );
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn python_fold_ranges_hide_complete_bodies_and_preserve_nested_state(cx: &mut TestAppContext) {
+    use gpui_kit::component::{highlighter::SyntaxHighlighter, input::DisplayMap};
+    super::super::languages::init();
+    let source = "class Service:\n    def run(self):\n        if self.ready:\n            work()\n        done()\n\nnext_task()\n";
+    let rope = source.into();
+    let mut highlighter = SyntaxHighlighter::new("python");
+    highlighter.update(None, &rope, None);
+    let folds = super::super::syntax::fold_ranges(&highlighter);
+    assert_eq!(
+        folds
+            .iter()
+            .map(|fold| (fold.start_line, fold.end_line))
+            .collect::<Vec<_>>(),
+        [(0, 5), (1, 5), (2, 4)]
+    );
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        let mut map = DisplayMap::new(gpui_kit::font("Menlo"), px(13.), None);
+        map.set_text(&rope, cx);
+        map.set_fold_candidates(folds);
+        map.set_folded(2, true);
+        assert!(map.is_buffer_line_hidden(3));
+        assert!(!map.is_buffer_line_hidden(4));
+        map.set_folded(0, true);
+        assert!(map.is_buffer_line_hidden(4));
+        assert!(!map.is_buffer_line_hidden(6));
+        map.set_folded(0, false);
+        assert!(!map.is_buffer_line_hidden(4));
+        assert!(map.is_buffer_line_hidden(3));
+    });
+}
+
+#[test]
+fn js_fold_ranges_keep_each_nested_object_method_and_multiline_string() {
+    use gpui_kit::component::highlighter::SyntaxHighlighter;
+    super::super::languages::init();
+    let source = "const config = {\n  nested: {\n    enabled: true,\n  },\n  run() {\n    return `hello {\nworld }`;\n  },\n};\nnextTask();\n";
+    for language in ["javascript", "jsx", "typescript", "tsx"] {
+        let mut highlighter = SyntaxHighlighter::new(language);
+        highlighter.update(None, &source.into(), None);
+        assert_eq!(
+            super::super::syntax::fold_ranges(&highlighter)
+                .iter()
+                .map(|fold| (fold.start_line, fold.end_line))
+                .collect::<Vec<_>>(),
+            [(0, 8), (1, 3), (4, 7)],
+            "{language}"
+        );
+    }
+}
+
+#[gpui_kit::test]
+async fn new_language_menu_actions_preserve_text_revision_and_dirty_state(cx: &mut TestAppContext) {
+    use super::super::editor::{
+        SetBash, SetC, SetCMake, SetCSharp, SetCpp, SetDiff, SetDotenv, SetElixir, SetGo,
+        SetGraphql, SetIni, SetJava, SetJsx, SetKotlin, SetLua, SetMake, SetPhp, SetProperties,
+        SetProto, SetRuby, SetScala, SetSql, SetSwift, SetXml, SetZig,
+    };
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            workspace.set_document_value(workspace.active_document_id(), "保留文本\n", window, cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let actions: Vec<(Box<dyn gpui_kit::Action>, &str)> = vec![
+        (Box::new(SetXml), "xml"),
+        (Box::new(SetProperties), "properties"),
+        (Box::new(SetIni), "ini"),
+        (Box::new(SetDotenv), "dotenv"),
+        (Box::new(SetJsx), "jsx"),
+        (Box::new(SetC), "c"),
+        (Box::new(SetCpp), "cpp"),
+        (Box::new(SetJava), "java"),
+        (Box::new(SetGo), "go"),
+        (Box::new(SetCSharp), "csharp"),
+        (Box::new(SetKotlin), "kotlin"),
+        (Box::new(SetSwift), "swift"),
+        (Box::new(SetPhp), "php"),
+        (Box::new(SetRuby), "ruby"),
+        (Box::new(SetLua), "lua"),
+        (Box::new(SetScala), "scala"),
+        (Box::new(SetElixir), "elixir"),
+        (Box::new(SetZig), "zig"),
+        (Box::new(SetSql), "sql"),
+        (Box::new(SetBash), "bash"),
+        (Box::new(SetMake), "make"),
+        (Box::new(SetCMake), "cmake"),
+        (Box::new(SetProto), "proto"),
+        (Box::new(SetGraphql), "graphql"),
+        (Box::new(SetDiff), "diff"),
+    ];
+    let revision = cx.update(|cx| {
+        let workspace = view.read(cx);
+        workspace.document_revision_for_test(workspace.active_document_id())
+    });
+    for (action, language) in actions {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.dispatch_action(action, cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.update(|cx| {
+            let workspace = view.read(cx);
+            let id = workspace.active_document_id();
+            assert_eq!(
+                workspace.document_language_for_test(id).as_deref(),
+                Some(language)
+            );
+            assert_eq!(
+                workspace.document_text(id, cx).as_deref(),
+                Some("保留文本\n")
+            );
+            assert_eq!(workspace.document_revision_for_test(id), revision);
+            assert!(workspace.document_is_dirty(id));
+        });
+    }
+}
+
+#[test]
+fn syntax_highlights_follow_edits_without_leaving_stale_string_ranges() {
+    use gpui_kit::component::highlighter::SyntaxHighlighter;
+    super::super::languages::init();
+    for language in ["javascript", "python", "xml", "properties", "ini", "dotenv"] {
+        let (before, after, token, role) = match language {
+            "xml" => ("<root a=\"old\"/>", "<root a=\"世界\"/>", "世界", "string"),
+            "properties" => ("name=old\n", "name=世界\n", "世界", "string"),
+            "ini" => ("[app]\nname=old\n", "[app]\nname=世界\n", "世界", "string"),
+            "dotenv" => ("NAME=old\n", "NAME=世界\n", "世界", "string"),
+            _ => ("name = 'old'", "name = '世界'", "世界", "string"),
+        };
+        let mut highlighter = SyntaxHighlighter::new(language);
+        highlighter.update(None, &before.into(), None);
+        highlighter.update(None, &after.into(), None);
+        let offset = after.find(token).unwrap();
+        let runs = highlighter.styles(&(offset..offset + token.len()), &CaptureStyle(role));
+        assert!(
+            runs.iter().all(|(_, style)| style.color.is_some()),
+            "{language} {runs:?}"
+        );
+    }
+}
+
+#[test]
+fn javascript_switch_and_typescript_type_bodies_remain_foldable() {
+    use gpui_kit::component::highlighter::SyntaxHighlighter;
+    super::super::languages::init();
+    for (language, source) in [
+        (
+            "javascript",
+            "switch (value) {\n  case 1:\n    work();\n    break;\n  default:\n    done();\n}\n",
+        ),
+        (
+            "typescript",
+            "interface Config {\n  name: string;\n  port: number;\n}\n",
+        ),
+        ("typescript", "enum Mode {\n  Read,\n  Write,\n}\n"),
+    ] {
+        let mut highlighter = SyntaxHighlighter::new(language);
+        highlighter.update(None, &source.into(), None);
+        assert!(
+            super::super::syntax::fold_ranges(&highlighter)
+                .iter()
+                .any(|fold| fold.start_line == 0),
+            "{source}"
+        );
+    }
+}
+
+#[gpui_kit::test]
+async fn background_folding_uses_latest_large_document_and_survives_language_switch(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+    let mut large = "# padding\n".repeat(27_000);
+    large.push_str("def outer():\n    value = 1\n    if value:\n        work()\n    done()\n");
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_language_for_test(id, "python", cx);
+            workspace.set_document_value(id, &large, window, cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        let id = workspace.active_document_id();
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 27_000, cx),
+            Some(true)
+        );
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 27_001, cx),
+            Some(false)
+        );
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 27_002, cx),
+            Some(true)
+        );
+    });
+    // Queue another large parse, then replace it and switch language before
+    // its debounce expires. The old snapshot must never restore stale folds.
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_value(id, &(large + "# edited\n"), window, cx);
+        });
+        window.render_frame(cx);
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_language_for_test(id, "javascript", cx);
+            workspace.set_document_value(
+                id,
+                "const result = items\n  .map(item => {\n    return item;\n  });\n",
+                window,
+                cx,
+            );
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(200));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        let id = workspace.active_document_id();
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 0, cx),
+            Some(false)
+        );
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 1, cx),
+            Some(true)
+        );
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 27_000, cx),
+            Some(false)
+        );
+    });
+}
+
+#[gpui_kit::test]
+async fn reenabling_folding_refreshes_edits_made_while_disabled(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+    for padding in [0, 27_000] {
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |workspace, cx| {
+                let id = workspace.active_document_id();
+                workspace.set_document_language_for_test(id, "python", cx);
+                workspace.set_document_folding_for_test(id, false, window, cx);
+                let text = "# padding\n".repeat(padding)
+                    + "def outer():\n    if ready:\n        work()\n    done()\n";
+                workspace.set_document_value(id, &text, window, cx);
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |workspace, cx| {
+                let id = workspace.active_document_id();
+                workspace.set_document_folding_for_test(id, true, window, cx);
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let workspace = view.read(cx);
+            let id = workspace.active_document_id();
+            assert_eq!(
+                workspace.document_fold_candidate_for_test(id, padding, cx),
+                Some(true)
+            );
+            assert_eq!(
+                workspace.document_fold_candidate_for_test(id, padding + 1, cx),
+                Some(true)
+            );
+            assert_eq!(
+                workspace.document_fold_candidate_for_test(id, padding + 2, cx),
+                Some(false)
+            );
+        });
+    }
+}
+
+#[test]
+fn mainstream_language_paths_detect_sources_headers_and_build_files() {
+    for (path, expected) in [
+        ("main.c", "c"),
+        ("api.h", "c"),
+        ("main.C", "cpp"),
+        ("main.cpp", "cpp"),
+        ("api.hpp", "cpp"),
+        ("api.hxx", "cpp"),
+        ("Main.java", "java"),
+        ("main.go", "go"),
+        ("Program.cs", "csharp"),
+        ("main.kt", "kotlin"),
+        ("build.gradle.kts", "kotlin"),
+        ("main.swift", "swift"),
+        ("index.php", "php"),
+        ("view.phtml", "php"),
+        ("app.rb", "ruby"),
+        ("Gemfile", "ruby"),
+        ("Rakefile", "ruby"),
+        ("main.lua", "lua"),
+        ("main.scala", "scala"),
+        ("build.sbt", "scala"),
+        ("main.ex", "elixir"),
+        ("test.exs", "elixir"),
+        ("build.zig", "zig"),
+        ("schema.sql", "sql"),
+        ("setup.sh", "bash"),
+        (".bashrc", "bash"),
+        (".zshrc", "bash"),
+        ("configure", "bash"),
+        ("Makefile", "make"),
+        ("GNUmakefile", "make"),
+        ("rules.mk", "make"),
+        ("CMakeLists.txt", "cmake"),
+        ("toolchain.cmake", "cmake"),
+        ("service.proto", "proto"),
+        ("schema.graphql", "graphql"),
+        ("query.gql", "graphql"),
+        ("change.patch", "diff"),
+        ("change.diff", "diff"),
+        ("stub.pyi", "python"),
+        ("script.pyw", "python"),
+        ("module.mts", "typescript"),
+        ("module.cts", "typescript"),
+        ("config.jsonc", "json"),
+        ("README.mdx", "markdown"),
+        ("unknown.xyz", "plaintext"),
+        ("Makefile.txt", "plaintext"),
+    ] {
+        assert_eq!(language_for_path(Path::new(path)), expected, "{path}");
+    }
+}
+
+#[test]
+fn mainstream_languages_highlight_comments_strings_and_keywords() {
+    for (language, source, comment, string, keyword) in [
+        (
+            "c",
+            "// note\nint main() { return puts(\"hello\"); }",
+            "// note",
+            "\"hello\"",
+            "return",
+        ),
+        (
+            "cpp",
+            "// note\nint main() { return puts(\"hello\"); }",
+            "// note",
+            "\"hello\"",
+            "return",
+        ),
+        (
+            "java",
+            "// note\nclass Main { String run() { return \"hello\"; } }",
+            "// note",
+            "\"hello\"",
+            "return",
+        ),
+        (
+            "go",
+            "// note\npackage main\nfunc run() string { return \"hello\" }",
+            "// note",
+            "\"hello\"",
+            "return",
+        ),
+        (
+            "csharp",
+            "// note\nclass Main { string Run() { return \"hello\"; } }",
+            "// note",
+            "\"hello\"",
+            "return",
+        ),
+        (
+            "kotlin",
+            "// note\nfun run(): String { return \"hello\" }",
+            "// note",
+            "hello",
+            "return",
+        ),
+        (
+            "swift",
+            "// note\nfunc run() -> String { return \"hello\" }",
+            "// note",
+            "hello",
+            "return",
+        ),
+        (
+            "php",
+            "<?php // note\nfunction run() { return 'hello'; }",
+            "// note",
+            "'hello'",
+            "return",
+        ),
+        (
+            "ruby",
+            "# note\ndef run\n  return 'hello'\nend",
+            "# note",
+            "'hello'",
+            "return",
+        ),
+        (
+            "lua",
+            "-- note\nfunction run() return 'hello' end",
+            "-- note",
+            "'hello'",
+            "return",
+        ),
+        (
+            "scala",
+            "// note\ndef run(): String = { return \"hello\" }",
+            "// note",
+            "\"hello\"",
+            "return",
+        ),
+        (
+            "elixir",
+            "# note\nif true, do: \"hello\"",
+            "# note",
+            "hello",
+            "if",
+        ),
+        (
+            "zig",
+            "// note\nfn run() []const u8 { return \"hello\"; }",
+            "// note",
+            "\"hello\"",
+            "return",
+        ),
+        (
+            "sql",
+            "-- note\nSELECT 'hello' FROM users;",
+            "-- note",
+            "'hello'",
+            "SELECT",
+        ),
+        (
+            "bash",
+            "# note\nif true; then echo \"hello\"; fi",
+            "# note",
+            "\"hello\"",
+            "if",
+        ),
+        (
+            "cmake",
+            "# note\nif(TRUE)\nmessage(\"hello\")\nendif()",
+            "# note",
+            "hello",
+            "if",
+        ),
+        (
+            "proto",
+            "// note\nsyntax = \"proto3\";\nmessage Sample { string name = 1; }",
+            "// note",
+            "\"proto3\"",
+            "message",
+        ),
+        (
+            "graphql",
+            "# note\nquery Sample { user(name: \"hello\") { id } }",
+            "# note",
+            "\"hello\"",
+            "query",
+        ),
+    ] {
+        assert_syntax_with_resolver(
+            language,
+            source,
+            comment,
+            "comment",
+            &CaptureFamily("comment"),
+        );
+        assert_syntax_with_resolver(language, source, string, "string", &CaptureFamily("string"));
+        assert_syntax_with_resolver(
+            language,
+            source,
+            keyword,
+            "keyword",
+            &CaptureFamily("keyword"),
+        );
+    }
+    assert_syntax_token("make", "# note\nall:\n\techo hello\n", "# note", "comment");
+    assert_syntax_token(
+        "diff",
+        "--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n",
+        "+new",
+        "string",
+    );
+}
+
+#[gpui_kit::test]
+async fn opening_extensionless_scripts_uses_shebang_without_overriding_known_types(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let dir = tempfile::tempdir().unwrap();
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+    for (name, source, expected) in [
+        (
+            "python-tool",
+            "#!/usr/bin/env python3\nprint('hello')\n",
+            "python",
+        ),
+        (
+            "node-tool",
+            "#!/usr/bin/env -S node --no-warnings\nconsole.log('hello');\n",
+            "javascript",
+        ),
+        ("ruby-tool", "#!/usr/bin/ruby\nputs 'hello'\n", "ruby"),
+        ("shell-tool", "#!/bin/bash -eu\necho hello\n", "bash"),
+        (
+            "lua-tool",
+            "\u{feff}#!/usr/bin/env lua5.4\nprint('hello')\n",
+            "lua",
+        ),
+        (
+            "unsupported-tool",
+            "#!/usr/bin/env fish\necho hello\n",
+            "plaintext",
+        ),
+        ("not-a-shebang", "# python\nprint('hello')\n", "plaintext"),
+        (
+            "notes.txt",
+            "#!/usr/bin/python3\nprint('hello')\n",
+            "plaintext",
+        ),
+        (
+            "actual.js",
+            "#!/usr/bin/python3\nprint('hello')\n",
+            "javascript",
+        ),
+        (
+            "env-trap",
+            "#!/usr/bin/env CUSTOM=python3 unknown\n",
+            "plaintext",
+        ),
+    ] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, source).unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |workspace, cx| {
+                workspace.open_paths(vec![path], window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let workspace = view.read(cx);
+            let id = workspace.active_document_id();
+            assert_eq!(
+                workspace.document_language_for_test(id).as_deref(),
+                Some(expected),
+                "{name}"
+            );
+        });
+    }
+}
+
+// Match the theme's documented dotted-name fallback, while the specific-role
+// regressions above continue to use the exact CaptureStyle resolver.
+struct CaptureFamily(&'static str);
+impl gpui_kit::base::input::HighlightStyleResolver for CaptureFamily {
+    fn style(&self, name: &str) -> Option<gpui_kit::HighlightStyle> {
+        (name == self.0
+            || name
+                .strip_prefix(self.0)
+                .is_some_and(|suffix| suffix.starts_with('.')))
+        .then(|| gpui_kit::HighlightStyle {
+            color: Some(gpui_kit::rgb(0x123456).into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[test]
+fn mainstream_language_specific_roles_are_not_hidden_by_generic_identifiers() {
+    for (language, source, token, family) in [
+        (
+            "c",
+            "int greet(int value) { return value; }",
+            "greet",
+            "function",
+        ),
+        (
+            "cpp",
+            "class Sample {}; int greet(int value) { return value; }",
+            "Sample",
+            "type",
+        ),
+        (
+            "java",
+            "class Sample { String greet() { return \"hello\"; } }",
+            "Sample",
+            "type",
+        ),
+        (
+            "java",
+            "class Sample { String greet() { return \"hello\"; } }",
+            "greet",
+            "function",
+        ),
+        (
+            "go",
+            "package main\nfunc greet() string { return \"hello\" }",
+            "greet",
+            "function",
+        ),
+        (
+            "csharp",
+            "class Sample { string Greet() { return \"hello\"; } }",
+            "Sample",
+            "type",
+        ),
+        (
+            "csharp",
+            "class Sample { string Greet() { return \"hello\"; } }",
+            "Greet",
+            "function",
+        ),
+        (
+            "swift",
+            "func greet(person: String) -> String { return person }",
+            "greet",
+            "function",
+        ),
+        (
+            "swift",
+            "func greet(person: String) -> String { return person }",
+            "person",
+            "variable.parameter",
+        ),
+        (
+            "kotlin",
+            "fun greet(person: String): String { return person }",
+            "greet",
+            "function",
+        ),
+        (
+            "ruby",
+            "def greet(person)\n  result = person\n  result\nend",
+            "greet",
+            "function",
+        ),
+        (
+            "ruby",
+            "def greet(person)\n  result = person\n  result\nend",
+            "person",
+            "variable.parameter",
+        ),
+        (
+            "ruby",
+            "def greet(person)\n  result = person\n  result\nend",
+            "result",
+            "variable",
+        ),
+        (
+            "lua",
+            "local function greet(person) return person end",
+            "greet",
+            "function",
+        ),
+        (
+            "scala",
+            "def greet(person: String): String = person",
+            "person",
+            "variable.parameter",
+        ),
+        (
+            "proto",
+            "syntax = \"proto3\"; message Sample { string name = 1; }",
+            "Sample",
+            "type",
+        ),
+        (
+            "graphql",
+            "query Sample { user(name: \"hello\") { id } }",
+            "user",
+            "property",
+        ),
+        ("cmake", "message(\"hello\")", "message", "function"),
+    ] {
+        assert_syntax_with_resolver(language, source, token, family, &CaptureFamily(family));
+    }
+}
+
+#[test]
+fn lua_table_methods_use_function_highlighting() {
+    for source in [
+        "module.greet()",
+        "function module.greet(person) return person end",
+    ] {
+        assert_syntax_with_resolver(
+            "lua",
+            source,
+            "greet",
+            "function",
+            &CaptureFamily("function"),
+        );
+    }
 }

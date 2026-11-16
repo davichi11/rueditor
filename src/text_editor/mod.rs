@@ -5,9 +5,11 @@ mod chrome;
 mod document;
 mod editor;
 mod file_io;
+mod languages;
 #[cfg(test)]
 mod sample;
 mod shell;
+mod syntax;
 mod workspace;
 
 use gpui_kit::component::Root;
