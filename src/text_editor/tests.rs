@@ -7,16 +7,18 @@ use super::super::editor::{
     DeleteLine, DuplicateLine, IndentSelection, JsonFormatResult, LineTransform,
     LowercaseSelection, MoveLineDown, MoveLineUp, Open, OutdentSelection, ReplaceAllMatches,
     SaveAs, TextTransform, ToggleRegex, ToggleSoftWrap, TrimTrailingWhitespace, UppercaseSelection,
-    find_matches, format_json, language_for_path, parse_goto_position, remap_range_after_trimming,
-    replace_matches, supports_preview, transform_current_line, transform_selection,
-    trim_trailing_whitespace,
+    find_matches, format_json, language_for_path, parse_goto_position, paths_from_open_urls,
+    remap_range_after_trimming, replace_matches, supports_preview, transform_current_line,
+    transform_selection, trim_trailing_whitespace, yaml_fold_ranges,
 };
 use super::super::file_io::{bytes_for_save, load, save_if_unchanged};
 use super::super::shell::key_bindings;
 use super::super::workspace::Workspace;
 use gpui_kit::component::Root;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use gpui_kit::{AppContext, TestAppContext, px, size};
+use gpui_kit::{
+    AppContext, ExternalPaths, FileDropEvent, InputEvent, TestAppContext, point, px, size,
+};
 use std::io::ErrorKind;
 use std::path::Path;
 
@@ -256,6 +258,25 @@ fn detects_m4_languages_from_common_extensions() {
     ] {
         assert_eq!(language_for_path(Path::new(path)), language, "{path}");
     }
+}
+
+#[test]
+fn yaml_folding_tracks_nested_blocks_lists_and_blank_lines() {
+    let text = "root:\n  child:\n    value: 1\n\n  items:\n    - first\n    - second\nnext: true\n";
+    let ranges = yaml_fold_ranges(text);
+
+    assert_eq!(ranges, vec![(0, 7), (1, 4), (4, 7)]);
+}
+
+#[test]
+fn decodes_local_file_urls_and_ignores_other_schemes() {
+    let paths = paths_from_open_urls([
+        "file:///tmp/a%20b.yaml".to_string(),
+        "https://example.com/file.txt".to_string(),
+        "not a URL".to_string(),
+    ]);
+
+    assert_eq!(paths, vec![Path::new("/tmp/a b.yaml").to_path_buf()]);
 }
 
 #[test]
@@ -977,6 +998,54 @@ async fn toggling_folding_keeps_text_and_dirty_state(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+async fn yaml_editor_installs_fold_candidates_for_each_indented_mapping(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_language_for_test(id, "yaml", cx);
+            workspace.set_document_value(
+                id,
+                "root:\n  child:\n    value: 1\n\n  items:\n    - first\n    - second\nnext: true\n",
+                window,
+                cx,
+            );
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        let id = workspace.active_document_id();
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 0, cx),
+            Some(true)
+        );
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 1, cx),
+            Some(true)
+        );
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 4, cx),
+            Some(true)
+        );
+        assert_eq!(
+            workspace.document_fold_candidate_for_test(id, 2, cx),
+            Some(false)
+        );
+    });
+}
+
+#[gpui_kit::test]
 async fn document_settings_are_independent_and_do_not_mark_dirty(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let mut view = None;
@@ -1212,6 +1281,52 @@ async fn opening_multiple_files_installs_each_file_as_a_tab(cx: &mut TestAppCont
     cx.run_until_parked();
 
     cx.update(|cx| assert_eq!(view.read(cx).document_count(), 3));
+}
+
+#[gpui_kit::test]
+async fn dropping_a_file_on_the_window_opens_it_in_a_tab(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), "dropped file").unwrap();
+    let path = file.path().to_path_buf();
+    let mut view = None;
+    let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.dispatch_event(
+            FileDropEvent::Entered {
+                position: point(px(32.), px(32.)),
+                paths: ExternalPaths([path.clone()].into_iter().collect()),
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.dispatch_event(
+            FileDropEvent::Submit {
+                position: point(px(32.), px(32.)),
+            }
+            .to_platform_input(),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        let id = workspace.active_document_id();
+        assert_eq!(
+            workspace.document_text(id, cx),
+            Some("dropped file".to_string())
+        );
+        assert_eq!(workspace.active_document_path(), Some(path));
+    });
 }
 
 #[gpui_kit::test]

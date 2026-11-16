@@ -4,7 +4,9 @@ use super::document::{SearchMode, SearchOptions};
 use gpui_kit::actions;
 use regex::{Regex, RegexBuilder};
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::OnceLock;
+use url::Url;
 
 // 菜单、快捷键和工作区监听共用这一组动作类型。
 actions!(
@@ -535,6 +537,61 @@ pub(super) fn language_for_path(path: &std::path::Path) -> &'static str {
         "csv" | "tsv" | "txt" | "text" => "plaintext",
         _ => "plaintext",
     }
+}
+
+/// 将 GPUI/macOS 交付的文件 URL 转成本地路径，忽略非文件 URL。
+pub(super) fn paths_from_open_urls(urls: impl IntoIterator<Item = String>) -> Vec<PathBuf> {
+    urls.into_iter()
+        .filter_map(|value| Url::parse(&value).ok()?.to_file_path().ok())
+        .collect()
+}
+
+/// 返回 YAML 块映射的折叠行范围。Tree-sitter YAML 中多个嵌套节点可能
+/// 从同一行开始，而通用折叠器会按起始行去重；缩进可以保留每层映射边界。
+pub(super) fn yaml_fold_ranges(text: &str) -> Vec<(usize, usize)> {
+    let lines = text
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let content = line.trim_start();
+            (!content.is_empty() && !content.starts_with('#')).then_some((
+                index,
+                line.len() - content.len(),
+                content,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let mut ranges = Vec::new();
+    let mut open_ranges = Vec::new();
+
+    for (index, (start, indent, content)) in lines.iter().enumerate() {
+        while open_ranges
+            .last()
+            .is_some_and(|(_, open_indent)| indent <= open_indent)
+        {
+            let (range_start, _) = open_ranges.pop().expect("the last range was checked");
+            if start.saturating_sub(range_start) >= 2 {
+                ranges.push((range_start, *start));
+            }
+        }
+
+        if content.contains(':')
+            && lines
+                .get(index + 1)
+                .is_some_and(|(_, next_indent, _)| next_indent > indent)
+        {
+            open_ranges.push((*start, *indent));
+        }
+    }
+
+    let end = text.bytes().filter(|byte| *byte == b'\n').count();
+    while let Some((start, _)) = open_ranges.pop() {
+        if end.saturating_sub(start) >= 2 {
+            ranges.push((start, end));
+        }
+    }
+    ranges.sort_by_key(|(start, _)| *start);
+    ranges
 }
 
 /// 判断路径是否应当按 JSON 语法处理。

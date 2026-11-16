@@ -5,16 +5,19 @@ use super::document::SearchSession;
 use super::document::{
     Document, DocumentId, EditorSettings, Encoding, Newline, SearchMode, SearchOptions,
 };
-use super::{editor, file_io};
+use super::{chrome, editor, file_io};
 use gpui_kit::base::Selectable;
 use gpui_kit::component::{
-    ActiveTheme, IconName, Sizable, StyledExt, WindowExt as _,
+    ActiveTheme, Disableable, IconName, Sizable, StyledExt, WindowExt as _,
     button::{Button, ButtonVariants},
-    input::{Editor, EditorState, Escape, Input, InputEvent, InputState, Replace, Search},
+    input::{
+        Editor, EditorState, Escape, FoldRange, Input, InputEvent, InputState, Replace, Search,
+    },
     resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
     tab::{Tab, TabBar},
     text::TextView,
+    tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -106,8 +109,8 @@ impl Workspace {
     /// 创建包含一个未命名文档的新工作区。
     pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
-        let search_query = cx.new(|cx| InputState::new(window, cx));
-        let search_replacement = cx.new(|cx| InputState::new(window, cx));
+        let search_query = cx.new(|cx| InputState::new(window, cx).placeholder("查找文档内容"));
+        let search_replacement = cx.new(|cx| InputState::new(window, cx).placeholder("替换为"));
         let mut workspace = Self {
             documents: Vec::new(),
             active_document_id: DocumentId(0),
@@ -126,6 +129,12 @@ impl Workspace {
             search_inputs_syncing: false,
             _subscriptions: Vec::new(),
         };
+        workspace._subscriptions.push((
+            DocumentId(0),
+            cx.observe_window_appearance(window, |_, window, cx| {
+                gpui_kit::component::theme::Theme::sync_system_appearance(Some(window), cx);
+            }),
+        ));
         // DocumentId(0) 只标记工作区级输入订阅，不对应任何文档。
         workspace._subscriptions.push((
             DocumentId(0),
@@ -188,6 +197,15 @@ impl Workspace {
         editor.update(cx, |state, cx| {
             apply_editor_settings(state, &settings, window, cx)
         });
+        if language == "yaml" {
+            editor.update(cx, |state, cx| {
+                let candidates = editor::yaml_fold_ranges(&state.value())
+                    .into_iter()
+                    .map(|(start, end)| FoldRange::new(start, end))
+                    .collect();
+                state.apply_highlighter_fold_candidates(candidates, cx);
+            });
+        }
         let observed_id = id;
         self._subscriptions.push((
             observed_id,
@@ -206,15 +224,27 @@ impl Workspace {
             subscribed_id,
             cx.subscribe(&editor, move |this, _, event, cx| {
                 // 只有正文变化才推进修订，光标移动不会把文档标成未保存。
-                if matches!(event, InputEvent::Change)
-                    && let Some(document) = this
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let yaml_editor = this
                     .documents
                     .iter_mut()
                     .find(|document| document.id == subscribed_id)
-                {
-                    document.revision += 1;
-                    cx.notify();
+                    .and_then(|document| {
+                        document.revision += 1;
+                        (document.language.as_ref() == "yaml").then(|| document.editor.clone())
+                    });
+                if let Some(editor) = yaml_editor {
+                    editor.update(cx, |state, cx| {
+                        let candidates = editor::yaml_fold_ranges(&state.value())
+                            .into_iter()
+                            .map(|(start, end)| FoldRange::new(start, end))
+                            .collect();
+                        state.apply_highlighter_fold_candidates(candidates, cx);
+                    });
                 }
+                cx.notify();
             }),
         ));
         editor.update(cx, |state, cx| state.focus(window, cx));
@@ -665,7 +695,7 @@ impl Workspace {
                     editor::TextCommandError::LineOutOfRange => "行号超出范围",
                     _ => "请输入有效的行号",
                 }
-                    .into();
+                .into();
                 cx.notify();
                 false
             }
@@ -1199,6 +1229,22 @@ impl Workspace {
     }
 
     #[cfg(test)]
+    pub(crate) fn document_fold_candidate_for_test(
+        &self,
+        id: DocumentId,
+        line: usize,
+        cx: &App,
+    ) -> Option<bool> {
+        self.document(id).map(|document| {
+            document
+                .editor
+                .read(cx)
+                .display_map()
+                .is_fold_candidate(line)
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn format_document_for_test(
         &mut self,
         id: DocumentId,
@@ -1317,7 +1363,8 @@ impl Workspace {
                 }
             });
             iter_and_load_files(paths, request_id, this, cx);
-        }).detach();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -1416,7 +1463,7 @@ impl Workspace {
                                 expected.as_ref(),
                             )
                         })
-                            .await
+                        .await
                     },
                 ),
                 Ok(None) => None,
@@ -1438,7 +1485,7 @@ impl Workspace {
                             document.disk_fingerprint = file_io::fingerprint(
                                 document.path.as_deref().expect("saved path must exist"),
                             )
-                                .ok();
+                            .ok();
                             // 保存期间又编辑过时修订已经前进，不能接着关闭或退出。
                             !document.is_dirty()
                         } else {
@@ -1464,7 +1511,7 @@ impl Workspace {
                 cx.notify();
             });
         })
-            .detach();
+        .detach();
         cx.notify();
     }
 
@@ -1519,7 +1566,7 @@ impl Workspace {
                 cx.notify();
             });
         })
-            .detach();
+        .detach();
         cx.notify();
     }
 
@@ -1597,7 +1644,7 @@ impl Workspace {
                 cx.notify();
             });
         })
-            .detach();
+        .detach();
         cx.notify();
     }
 
@@ -1656,10 +1703,19 @@ impl Workspace {
 
     /// 把拖入的文件按打开流程逐个加载。忙碌时忽略，避免和正在进行的加载交错。
     fn drop_files(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_paths(paths.paths().to_vec(), window, cx);
+    }
+
+    /// 从启动参数、系统打开事件或窗口拖放接收文件路径并异步加载。
+    pub(super) fn open_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_busy() {
             return;
         }
-        let paths = paths.paths().to_vec();
         if paths.is_empty() {
             return;
         }
@@ -1670,7 +1726,8 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             // 遍历 paths 中的每个路径，并调用 file_io::load 函数加载文件。
             iter_and_load_files(paths, request_id, this, cx);
-        }).detach();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -1684,7 +1741,10 @@ impl Workspace {
             div()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child("没有可预览的内容")
+                .v_flex()
+                .gap_2()
+                .child("Markdown 预览")
+                .child("在左侧输入 Markdown，预览会同步更新。")
                 .into_any_element()
         } else {
             // 元素 ID 带上文档 ID，切换标签时预览状态各自独立保留。
@@ -1709,7 +1769,12 @@ impl Workspace {
     }
 }
 
-fn iter_and_load_files(paths: Vec<PathBuf>, request_id: u64, this: WeakEntity<Workspace>, cx: &mut AsyncWindowContext) {
+fn iter_and_load_files(
+    paths: Vec<PathBuf>,
+    request_id: u64,
+    this: WeakEntity<Workspace>,
+    cx: &mut AsyncWindowContext,
+) {
     for path in paths {
         let weak = this.clone();
         let task = cx.background_spawn(async move {
@@ -1728,7 +1793,8 @@ fn iter_and_load_files(paths: Vec<PathBuf>, request_id: u64, this: WeakEntity<Wo
                 this.loading = this.pending_loads != 0;
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
     }
 }
 
@@ -1743,40 +1809,57 @@ impl Render for Workspace {
             .unwrap_or(0);
         let active = self.document(active_id);
         let position = active.map(|document| document.editor.read(cx).cursor_position());
-        let title = active
-            .map(|document| document.title.clone())
-            .unwrap_or_else(|| "未命名".into());
-        let active_dirty = active.is_some_and(Document::is_dirty);
         let tabs = self.documents.iter().map(|document| {
             let id = document.id;
-            let label = format!(
-                "{}{}",
-                document.title,
-                if document.is_dirty() { " *" } else { "" }
-            );
             Tab::new()
-                .label(label)
+                .label(document.title.clone())
+                .aria_label(format!(
+                    "{}{}",
+                    chrome::location(document),
+                    if document.is_dirty() {
+                        "，未保存"
+                    } else {
+                        ""
+                    }
+                ))
+                .prefix(
+                    div()
+                        .id(format!("document-location-{}", id.0))
+                        .tooltip({
+                            let location = chrome::location(document);
+                            move |window, cx| Tooltip::new(location.clone()).build(window, cx)
+                        })
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(chrome::file_mark(document.language.as_ref())),
+                )
                 .selected(id == active_id)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.activate_document_with_focus(id, window, cx);
                     cx.notify();
                 }))
                 .suffix(
-                    Button::new(format!("close-tab-{}", id.0))
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::Close)
-                        .accessibility_label("关闭标签")
-                        .tooltip("关闭标签")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.request_close_document(id, window, cx)
-                        })),
+                    div()
+                        .h_flex()
+                        .items_center()
+                        .gap_1()
+                        .when(document.is_dirty(), |row| {
+                            row.child(div().text_color(cx.theme().muted_foreground).child("●"))
+                        })
+                        .child(
+                            Button::new(format!("close-tab-{}", id.0))
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Close)
+                                .accessibility_label("关闭标签")
+                                .tooltip("关闭标签")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.request_close_document(id, window, cx)
+                                })),
+                        ),
                 )
         });
         let can_edit = !self.is_busy();
-        let language_value = active
-            .map(|document| document.language.clone())
-            .unwrap_or_else(|| "plaintext".into());
         div()
             .id("rueditor")
             .track_focus(&self.focus)
@@ -2049,16 +2132,64 @@ impl Render for Workspace {
                 }
             }))
             .child(
+                TabBar::new("documents")
+                    .folder()
+                    .small()
+                    .max_width(px(220.))
+                    .selected_index(active_index)
+                    .children(tabs)
+                    .suffix(
+                        Button::new("new-tab")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Plus)
+                            .accessibility_label("新建标签")
+                            .tooltip("新建标签")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.new_tab(window, cx);
+                            })),
+                    ),
+            )
+            .child(
                 div()
                     .h_flex()
                     .h_8()
+                    .gap_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
                     .px_3()
                     .flex_shrink_0()
                     .items_center()
                     .border_b_1()
                     .border_color(cx.theme().border)
-                    .child(format!("{}{}", title, if active_dirty { " *" } else { "" }))
-                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(active.map(chrome::location).unwrap_or_default()),
+                    )
+                    .child(
+                        Button::new("open-file")
+                            .ghost()
+                            .small()
+                            .label("打开…")
+                            .tooltip("打开文件")
+                            .disabled(!can_edit)
+                            .on_click(cx.listener(|this, _, window, cx| this.open(cx, window))),
+                    )
+                    .child(
+                        Button::new("find-in-document")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Search)
+                            .accessibility_label("查找文档内容")
+                            .tooltip("查找文档内容")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_search_panel(this.active_id(), false, window, cx)
+                            })),
+                    )
                     .when_some(
                         // 只有支持预览的语言才显示这个按钮，避免给不可用的操作入口。
                         active.filter(|document| {
@@ -2079,41 +2210,6 @@ impl Render for Workspace {
                                     })),
                             )
                         },
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!(
-                                "{} · {} · {}",
-                                editor::language_label(language_value.as_ref()),
-                                active.map_or("Utf8", |document| match document.encoding {
-                                    Encoding::Utf8 => "Utf8",
-                                    Encoding::Utf8Bom => "Utf8-BOM",
-                                }),
-                                active.map_or("Lf", |document| match document.newline {
-                                    Newline::Lf => "Lf",
-                                    Newline::Crlf => "CrLf",
-                                })
-                            )),
-                    ),
-            )
-            .child(
-                TabBar::new("documents")
-                    .underline()
-                    .small()
-                    .selected_index(active_index)
-                    .children(tabs)
-                    .suffix(
-                        Button::new("new-tab")
-                            .ghost()
-                            .small()
-                            .icon(IconName::Plus)
-                            .accessibility_label("新建标签")
-                            .tooltip("新建标签")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.new_tab(window, cx);
-                            })),
                     ),
             )
             .child(if active.is_some_and(|document| document.search.open) {
@@ -2127,7 +2223,7 @@ impl Render for Workspace {
                             &document.search.query,
                             document.search.options,
                         )
-                            .ok()
+                        .ok()
                     })
                     .map_or(0, |ranges| ranges.len());
                 let id = active_id;
@@ -2136,6 +2232,9 @@ impl Render for Workspace {
                     .gap_2()
                     .px_3()
                     .py_2()
+                    .bg(cx.theme().muted)
+                    .text_xs()
+                    .flex_shrink_0()
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(
@@ -2143,18 +2242,20 @@ impl Render for Workspace {
                             .h_flex()
                             .gap_2()
                             .items_center()
-                            .child(Input::new(&self.search_query).small())
-                            .child(format!(
-                                "{} · {}",
-                                if session.options.mode == SearchMode::Regex {
-                                    "正则"
-                                } else {
-                                    "文本"
-                                },
-                                matches
-                            ))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(Input::new(&self.search_query).small()),
+                            )
+                            .child(
+                                div()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!("{} 项匹配", matches)),
+                            )
                             .child(
                                 Button::new("search-next")
+                                    .accessibility_label("下一个匹配")
                                     .ghost()
                                     .small()
                                     .icon(IconName::ChevronDown)
@@ -2165,6 +2266,7 @@ impl Render for Workspace {
                             )
                             .child(
                                 Button::new("search-previous")
+                                    .accessibility_label("上一个匹配")
                                     .ghost()
                                     .small()
                                     .icon(IconName::ChevronUp)
@@ -2231,6 +2333,7 @@ impl Render for Workspace {
                             )
                             .child(
                                 Button::new("search-close")
+                                    .accessibility_label("关闭查找")
                                     .ghost()
                                     .small()
                                     .icon(IconName::Close)
@@ -2246,7 +2349,12 @@ impl Render for Workspace {
                                 .h_flex()
                                 .gap_2()
                                 .items_center()
-                                .child(Input::new(&self.search_replacement).small())
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(Input::new(&self.search_replacement).small()),
+                                )
                                 .child(
                                     Button::new("replace-current")
                                         .outline()
@@ -2281,6 +2389,8 @@ impl Render for Workspace {
                     .child(if let Some(document) = active {
                         let editor_panel = Editor::new(&document.editor)
                             .aria_label("文档正文")
+                            .appearance(false)
+                            .bordered(false)
                             .readonly(!can_edit)
                             .h(relative(1.))
                             .into_any_element();
@@ -2302,6 +2412,9 @@ impl Render for Workspace {
             )
             .child(
                 StatusBar::new()
+                    .flex_shrink_0()
+                    .px_3()
+                    .right(active.map(chrome::metadata).unwrap_or_default())
                     .left(if let Some(position) = position {
                         format!("行 {}，列 {}", position.line + 1, position.character + 1)
                     } else {
@@ -2309,6 +2422,11 @@ impl Render for Workspace {
                     })
                     .child(if self.loading {
                         "处理中…".into()
+                    } else if self.message.is_empty()
+                        && active
+                            .is_some_and(|document| document.editor.read(cx).value().is_empty())
+                    {
+                        "直接输入，或拖入文件以打开".into()
                     } else {
                         self.message.clone()
                     }),
