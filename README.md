@@ -4,7 +4,7 @@
 
 ![Rust](https://img.shields.io/badge/Rust-1.85%2B%20%7C%202024%20edition-000000?logo=rust&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
 
 
 ## 这是什么

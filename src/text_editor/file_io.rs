@@ -16,8 +16,8 @@ pub(super) struct FileFingerprint {
     pub(super) content_hash: u64,
 }
 
-#[derive(Debug)]
 /// 从磁盘读取并规范化后的文本及其原始格式信息。
+#[derive(Debug)]
 pub(super) struct LoadedText {
     pub(super) path: PathBuf,
     pub(super) text: String,

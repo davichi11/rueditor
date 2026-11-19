@@ -49,7 +49,7 @@ fn editor_theme(mut config: ThemeConfig, dark: bool) -> ThemeConfig {
     colors.status_bar = Some(chrome.into());
     colors.status_bar_border = Some(border.into());
     let highlight = config.highlight.get_or_insert_with(Default::default);
-    let color = |hex: u32| gpui_kit::rgb(hex).into();
+    let color = |hex: u32| rgb(hex).into();
     highlight.editor_background = Some(color(if dark { 0x202127 } else { 0xFAFAFC }));
     highlight.editor_foreground = Some(color(if dark { 0xDCE0E8 } else { 0x303540 }));
     highlight.editor_active_line = Some(color(if dark { 0x282B34 } else { 0xF0F1F6 }));

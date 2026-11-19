@@ -135,7 +135,7 @@ impl Workspace {
         workspace._subscriptions.push((
             DocumentId(0),
             cx.observe_window_appearance(window, |_, window, cx| {
-                gpui_kit::component::theme::Theme::sync_system_appearance(Some(window), cx);
+                component::theme::Theme::sync_system_appearance(Some(window), cx);
             }),
         ));
         // DocumentId(0) 只标记工作区级输入订阅，不对应任何文档。

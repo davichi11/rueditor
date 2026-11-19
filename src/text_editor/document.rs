@@ -90,11 +90,11 @@ impl Default for SearchOptions {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
 /// 绑定在单个文档上的查找/替换会话。
 ///
 /// 查询、替换文本、选项、面板开关和错误都属于这份会话。
 /// 工作区只保留一套输入框，切换标签时从这里恢复。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct SearchSession {
     pub(super) query: String,
     pub(super) replacement: String,
