@@ -1,53 +1,103 @@
 # Rueditor
 
-Rueditor 是一个参考 Notepad++ 和 CotEditor 的轻量级跨平台文本编辑器，使用 Rust 2024 和 GPUI Kit 0.8.0 构建。项目聚焦于可靠的文本编辑、多文档工作区、语法高亮、代码折叠和常用查找替换流程。
+基于 GPUI 构建的原生、轻量的跨平台文本编辑器：打开即编辑，不做 IDE。作为Notepad++ / CotEditor 的现代替代品。
 
-## 当前状态
+![Rust](https://img.shields.io/badge/Rust-1.85%2B%20%7C%202024%20edition-000000?logo=rust&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
+![Version](https://img.shields.io/badge/version-0.1.0-blue)
 
-M0–M5 的核心功能已经实现：
 
-| 里程碑 | 内容 |
+## 这是什么
+
+Rueditor 面向「打开一个文件、改几行、存盘、关掉」的场景：配置文件、日志、脚本、笔记，单文件从几百 KB 到几 MB。三个取舍决定了它的形状：
+
+- **冷启动即可编辑。** 没有欢迎页、没有插件加载、没有工作区索引，窗口出现就能打字。
+- **不擅自改你的文件。** 保存时原样保留 UTF-8 BOM 和 CRLF；读到非法 UTF-8 或混合换行直接报错，而不是猜一个编码写回去。
+- **高亮和搜索做到够用，不追 IDE。** 37 种语言模式、代码折叠、正则替换、Markdown 预览，到此为止。
+
+需要 LSP、调试器、Git 集成、内置终端的话，VS Code 或 Zed 是更合适的选择。
+
+## 快速开始
+
+### 下载安装（macOS）
+
+从 [Releases](https://github.com/davichi11/rueditor/releases) 下载 `Rueditor.dmg`，拖入「应用程序」。
+
+当前版本未签名、未公证，首次打开需要右键点图标 →「打开」，或执行：
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Rueditor.app
+```
+
+### 从源码运行
+
+需要 Rust 1.85 或更高（edition 2024）。
+
+```sh
+git clone git@github.com:davichi11/rueditor.git
+cd rueditor
+cargo run --release
+```
+
+`rueditor` 已是默认运行目标，`cargo run` 等价。离线环境加 `--offline`；想把文件直接带进来，追加路径即可：
+
+```sh
+cargo run --release -- ~/notes.md src/main.rs
+```
+
+## 功能
+
+### 编辑
+
+- 输入、选区、撤销与重做。
+- 文档级设置：行号、自动换行、显示空白、智能缩进、自动闭合括号、Tab 宽度（2/4/8）。
+- 行操作：跳转到行、复制 / 删除 / 移动当前行、缩进 / 反缩进、大小写转换、清理行尾空白。
+- 设置和搜索会话按文档独立保存，改设置不会把文档标记成未保存。
+
+### 文件与编码
+
+- 新建、打开、拖入、保存、另存为；文件读写与哈希校验在后台完成，不阻塞界面。
+- 多标签工作区，重复打开同一路径会定位到已有标签；批量拖入时单个文件失败不影响其他文件。
+- 原子保存；保存前校验文件指纹，检测到外部修改时拒绝覆盖。
+- 保留 UTF-8 / UTF-8 BOM 与 LF / CRLF 原格式；拒绝非法 UTF-8、混合换行和孤立 CR，并保持原文件不变。
+- 关闭标签或退出时确认未保存修改，保存失败或取消都不会丢内容。
+
+### 语法高亮与折叠
+
+内置 37 种语言模式（含纯文本回退），高亮由 tree-sitter 提供：
+
+| 类别 | 支持 |
 | --- | --- |
-| M0 | 项目标识统一为 `Rueditor` / `rueditor`，统一 Cargo 包、默认运行目标、窗口标题和应用 ID。 |
-| M1 | 跨平台应用壳、窗口配置和平台主修饰键快捷键。macOS 使用 Command，Windows/Linux 使用 Ctrl。 |
-| M2 | 新建、打开、拖入、保存、另存为；后台文件 I/O；UTF-8、UTF-8 BOM、LF 和 CRLF 处理；原子保存。 |
-| M3 | 多标签文档工作区；每个文档独立维护文本、选区、滚动、撤销历史、路径、编码、换行格式和未保存状态。 |
-| M4 | 常见文件扩展名自动识别；手动切换语言；语法高亮和代码折叠。 |
-| M5 | 查找、替换、下一个匹配、上一个匹配和全部替换；全部替换支持一次撤销。 |
-| P1 | 文档级编辑设置；跳转、复制、删除、移动、缩进和大小写转换等文本/行操作；普通文本与正则搜索替换；大小写、全词匹配和捕获组替换。 |
-| P2 | Markdown 文档预览：右侧分栏实时渲染正文，标题、列表、引用、代码块和表格按 CommonMark 与 GFM 解析。 |
+| 系统与脚本 | Shell / Bash、Makefile、CMake、Diff |
+| 通用编程 | C、C++、Java、Go、C#、Kotlin、Swift、PHP、Ruby、Lua、Scala、Elixir、Zig、SQL |
+| 前端 | JavaScript、JSX、TypeScript、TSX、HTML、CSS |
+| 数据与配置 | JSON、TOML、YAML、XML、Properties、INI、Dotenv、Protocol Buffers、GraphQL |
+| 文档 | Markdown |
+| 其他 | Rust、Python、纯文本 |
 
-## 已实现功能
+- 检测顺序：显式扩展名 → 特殊文件名（Makefile、CMakeLists.txt、Gemfile、`.bashrc` 等）→ 首行 shebang（支持 `/usr/bin/env` 与 `env -S`）→ 纯文本。`.h` 归 C，`.hpp/.hh/.hxx` 与大写 `.C` 归 C++。
+- 高亮区分函数、方法、参数、属性、JSX 标签、字符串转义与模板插值。
+- 折叠：JS / TS / JSX / TSX 按真实块结构，Python 按函数、类与缩进分支，YAML 按层级；收起时完整隐藏块体并保留内层折叠状态。
+- 主题跟随系统深浅色（Rueditor Light / Rueditor Dark），14px 界面字号、13px 等宽字号。
 
-- 基本文本编辑、选区、撤销和重做。
-- 多标签新建、切换和关闭。
-- 打开多个文件；重复打开同一路径时定位已有标签。
-- 将多个文件拖入窗口并逐个后台加载，单个文件失败不会阻塞其他文件。
-- 关闭标签或退出应用时确认未保存修改；保存失败、取消保存或取消关闭不会丢失修改。
-- 保存时保留 UTF-8 / UTF-8 BOM 和 LF / CRLF 格式。
-- 拒绝非法 UTF-8、混合换行和单独 CR，并保留原文件不变。
-- JSON 格式化；对部分常见非严格 JSON 内容进行自动修复后格式化。
-- 普通文本格式化：清理行尾空白并统一文件末尾换行。
-- 使用 CotEditor 风格的原生应用菜单栏，按“文件 / 编辑 / 格式 / 显示 / 文本 / 查找 / 窗口 / 帮助”组织操作，避免顶部工具栏拥挤。
-- 文档标签栏保留当前文件和未保存状态；语言类型、编码、换行格式和缩进信息集中显示在状态栏。
+### 查找与替换
 
-当前语言选择器提供：纯文本、Rust、Python、JavaScript、JSX、TypeScript、TSX、JSON、HTML、CSS、Markdown、TOML、YAML、XML、Properties、INI 和 Dotenv。未知类型回退为纯文本；`.env`、`.env.local`、`.env.production` 等文件自动识别为 Dotenv，`.xml`、`.svg`、`.xsd`、`.xsl`、`.xslt`、`.plist` 使用 XML 语法，`.ini`、`.cfg` 使用 INI 语法。
+- 普通文本与正则两种模式，支持大小写匹配、全词匹配。
+- 下一个 / 上一个匹配、替换当前、全部替换；正则替换支持捕获组引用，全部替换可一次撤销。
+- 无效正则不会写回文档。
 
-新增主流编程语言：C、C++、Java、Go、C#、Kotlin、Swift、PHP、Ruby、Lua、Scala、Elixir、Zig、SQL、Shell/Bash；构建与接口文件支持 Makefile、CMake、Protocol Buffers、GraphQL 和 Diff。所有类型均可通过“文本 → 语言”手动切换。
+### 格式化
 
-文件类型检测优先使用扩展名及特殊文件名，包括 C/C++ 头文件、`.pyi/.pyw`、`.mts/.cts`、`.jsonc/.ipynb`、Makefile、CMakeLists.txt、Gemfile/Rakefile、`.bashrc/.zshrc` 等。约定 `.h` 使用 C，`.hpp/.hh/.hxx` 及大写 `.C` 使用 C++；无扩展名脚本按首行 shebang 识别 Python、Node.js、Ruby、PHP、Lua、Shell、Elixir 和 Swift，支持 `/usr/bin/env` 与 `env -S`。显式扩展名优先于 shebang，未知类型回退为纯文本。Shell 使用 Bash 语法提供通用高亮；MDX 使用 Markdown 语法，暂不提供 JSX 混合解析。
+- JSON 格式化，并对部分常见的非严格 JSON 自动修复后格式化。
+- 纯文本格式化：清理行尾空白、统一文件末尾换行。
 
-高亮区分函数、方法、参数、属性、JSX 标签、字符串转义与模板插值，并提供统一的浅色/深色语法配色。JS/TS/JSX/TSX 按真实块结构折叠；Python 按函数、类与缩进分支折叠，收起时完整隐藏块体并保留内层折叠状态。
+### Markdown 预览
 
-查找和替换支持普通文本与正则表达式模式，并提供大小写匹配、全词匹配、当前替换和全部替换。正则替换支持捕获组引用；无效正则表达式不会写回文档。普通文本搜索继续复用 GPUI Kit 的编辑器能力。
+「显示 → Markdown 预览」或 `⇧⌘V` 打开右侧分栏，拖拽调整宽度，内容随正文实时刷新。按 CommonMark 与 GFM 解析，支持标题、列表、引用、表格、删除线和代码块，代码块复用编辑器的高亮主题。预览状态按文档保存，非 Markdown 文档打开时会提示不支持。
 
-P1 编辑能力还包括文档级行号、自动换行、显示空白、智能缩进、自动闭合括号和 Tab 宽度设置，以及跳转到行、复制/删除/移动当前行、缩进/反缩进、大小写转换和清理行尾空白。设置和搜索会话均按文档独立保存，设置变化不会标记文档为未保存。
+## 快捷键
 
-Markdown 文档支持预览：在「显示」菜单点开「Markdown 预览」，或按 `⇧⌘V`，编辑器右侧会出现可拖拽调整宽度的预览面板，内容随正文实时刷新。预览按 CommonMark 与 GFM 解析，支持标题、列表、引用、表格、删除线和代码块；代码块会复用编辑器的语法高亮主题。预览状态按文档独立保存，切换标签后各自保留；非 Markdown 文档打开预览时会提示不受支持。
-
-## 菜单栏与快捷键
-
-菜单栏使用系统原生菜单承载完整操作，`secondary` 是 GPUI 的跨平台主修饰键：macOS 对应 Command，Windows/Linux 对应 Ctrl。
+菜单栏使用系统原生菜单，按「文件 / 编辑 / 格式 / 显示 / 文本 / 查找 / 窗口 / 帮助」组织。下表 macOS 列为 `secondary` 主修饰键，Windows/Linux 对应 Ctrl。
 
 | 操作 | macOS | Windows/Linux |
 | --- | --- | --- |
@@ -65,32 +115,10 @@ Markdown 文档支持预览：在「显示」菜单点开「Markdown 预览」�
 | 复制当前行 | `⌘D` | `Ctrl+D` |
 | 删除当前行 | `⇧⌘K` | `Ctrl+Shift+K` |
 | 移动当前行 | `⌥↑` / `⌥↓` | `Alt+Up` / `Alt+Down` |
-| 缩进/反缩进 | `⌘[` / `⌘]` | `Ctrl+[` / `Ctrl+]` |
+| 缩进 / 反缩进 | `⌘[` / `⌘]` | `Ctrl+[` / `Ctrl+]` |
 | Markdown 预览 | `⇧⌘V` | `Ctrl+Shift+V` |
 
-编辑区的输入、撤销和重做由 GPUI Kit 的 `Editor` 组件提供。
-
-## 运行
-
-需要 Rust stable、Cargo，以及 GPUI Kit 支持的桌面平台环境。
-
-```sh
-cargo run --bin rueditor
-```
-
-项目已经将 `rueditor` 配置为默认运行目标，因此下面的命令等价：
-
-```sh
-cargo run
-```
-
-离线环境可使用：
-
-```sh
-cargo run --offline
-```
-
-## 验证
+## 构建、测试与打包
 
 ```sh
 cargo fmt --check
@@ -101,57 +129,59 @@ cargo build --release --offline
 git diff --check
 ```
 
-测试位于 [`src/text_editor/tests.rs`](src/text_editor/tests.rs)，覆盖文件读写、编码和换行、异步多文档流程、未保存状态、格式化、语言切换、折叠以及查找替换等行为。
+测试位于 [`src/text_editor/tests.rs`](src/text_editor/tests.rs)，覆盖文件读写、编码与换行、异步多文档流程、未保存状态、格式化、语言切换、折叠以及查找替换。
+
+### macOS 打包
+
+打包脚本只在 macOS 上执行，默认产出未签名、未公证的 `dist/Rueditor.app`：
+
+```sh
+./scripts/package-macos.sh --offline          # 只生成 App
+./scripts/package-macos.sh --offline --dmg    # 同时生成 Rueditor.dmg
+```
+
+| 选项 | 作用 |
+| --- | --- |
+| `--check` | 检查依赖、Info.plist、图标和已有 App，不构建 |
+| `--offline` | 使用 Cargo 离线构建 |
+| `--clean` | 清理本项目生成的 App 和 DMG |
+| `--dmg` | 在 App 校验后生成 `Rueditor.dmg` |
+| `--sign IDENTITY` | 用 codesign 签名，传 `-` 表示 ad-hoc 签名 |
+
+脚本不会自动访问钥匙串、签名或公证。正式分发需要传入开发者证书 identity，并另行完成 notarization。
 
 ## 代码结构
 
 ```text
-src/bin/rueditor.rs         可执行入口
-src/text_editor/mod.rs      编辑器初始化和主窗口生命周期
-src/text_editor/shell.rs    平台快捷键和窗口启动配置
-src/text_editor/document.rs 文档模型、路径、编码、换行和修订状态
-src/text_editor/editor.rs   编辑器动作、语言识别和格式化工具
-src/text_editor/file_io.rs  UTF-8/BOM、换行检测和原子文件保存
-src/text_editor/workspace.rs 多文档工作区、标签、文件流程、Markdown 预览和主界面
-src/text_editor/tests.rs    单元测试和 GPUI 集成测试
-scripts/package-macos.sh    macOS App/DMG 打包脚本
+src/bin/rueditor.rs            可执行入口
+src/text_editor/mod.rs         初始化、窗口生命周期、启动参数与文件 URL
+src/text_editor/shell.rs       平台快捷键、原生菜单和窗口配置
+src/text_editor/appearance.rs  主题与配色（浅色 / 深色）
+src/text_editor/workspace.rs   多文档工作区、标签、文件流程、Markdown 预览和主界面
+src/text_editor/document.rs    文档模型、路径、编码、换行和修订状态
+src/text_editor/editor.rs      动作定义、语言识别、搜索与格式化工具
+src/text_editor/file_io.rs     UTF-8/BOM 探测、换行检测、指纹与原子保存
+src/text_editor/syntax.rs      高亮与折叠区间计算
+src/text_editor/languages.rs   语法注册与查询修正
+src/text_editor/languages/     自定义 tree-sitter 查询（.scm）
+src/text_editor/chrome.rs      标签栏与状态栏的共享展示信息
+src/text_editor/tests.rs       单元测试与 GPUI 集成测试
+scripts/package-macos.sh       macOS App / DMG 打包脚本
 ```
 
-工作区使用稳定的 `DocumentId` 管理文档。每个文档持有独立的 `EditorState`，异步文件操作完成后会根据文档 ID 和修订状态确认结果仍属于正确的文档。
+工作区用稳定的 `DocumentId` 管理文档，每个文档持有独立的 `EditorState`。异步文件操作完成后，会根据文档 ID 和修订状态确认结果仍属于正确的文档。
 
-## macOS 打包
+## 已知限制
 
-打包脚本只在 macOS 上执行，默认生成未签名、未公证的 `dist/Rueditor.app`：
+- 只处理 UTF-8 和 UTF-8 BOM，不自动转换其他字符编码。
+- 检测到外部修改时只拒绝保存，尚不支持自动重新载入与冲突合并。
+- 外观只跟随系统深浅色，主题切换和字号调整尚未产品化。
+- 未针对超大文件做分块加载或专门优化。
+- 未实现分栏编辑、文件夹级搜索、插件、LSP、内置终端、云同步、自动保存和 Unicode 正规化。
+- Windows/Linux 的原生窗口、中文输入法、原生拖放和最小窗口布局仍需实机验收。
 
-```sh
-./scripts/package-macos.sh --offline
-```
+完整阶段记录与后续计划见[路线图](docs/ROADMAP.md)。
 
-同时生成 DMG：
+## 许可
 
-```sh
-./scripts/package-macos.sh --offline --dmg
-```
-
-常用选项：
-
-```text
---check             检查打包依赖、Info.plist、图标和已有 App，不构建
---offline           使用 Cargo 离线构建
---clean             清理本项目生成的 App 和 DMG
---dmg               在 App 校验后生成 Rueditor.dmg
---sign IDENTITY     使用 codesign 签名；传入 - 表示 ad-hoc 签名
-```
-
-脚本不会自动访问钥匙串、签名或公证。正式分发时应传入开发者证书 identity，并另行完成 notarization。
-
-## 已知限制与后续工作
-
-- 当前只处理 UTF-8 和 UTF-8 BOM，不自动转换其他字符编码。
-- P0 已实现外部文件修改保护：保存前会检查文件指纹并拒绝覆盖外部修改；当前仍不支持自动重新载入和冲突合并。
-- P1 已提供文档级编辑设置和自动换行；主题切换、字号调整等完整外观设置仍未产品化。
-- 尚未针对超大文件实现分块加载或专门的性能优化。
-- 尚未实现分栏编辑、文件夹级搜索、插件、LSP、内置终端、云同步、自动保存和 Unicode 正规化。
-- Windows/Linux 原生窗口、中文输入法、原生拖放、最小窗口布局和真实视觉效果仍需在对应平台人工验收。
-
-完整开发边界、阶段记录和验收顺序见[实现计划](docs/superpowers/plans/2026-09-14-text-editor.md)。
+本项目采用 [MIT License](LICENSE)。
