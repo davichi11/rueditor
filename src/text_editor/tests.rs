@@ -2659,3 +2659,114 @@ fn lua_table_methods_use_function_highlighting() {
         );
     }
 }
+
+#[gpui_kit::test]
+async fn search_query_keeps_focus_across_character_updates(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut view = None;
+    let handle = cx.open_window(size(px(900.), px(600.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_value(id, "alpha alphabet 中文", window, cx);
+        });
+        window.render_frame(cx);
+        window.dispatch_action(Box::new(super::super::editor::OpenSearchPanel), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for expected in ["a", "al", "alp", "alph", "alpha"] {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.input(&expected[expected.len() - 1..], cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let workspace = view.read(cx);
+            let id = workspace.active_document_id();
+            assert_eq!(
+                workspace.search_session_for_test(id).unwrap().query,
+                expected
+            );
+            assert_eq!(
+                workspace.document_text(id, cx).as_deref(),
+                Some("alpha alphabet 中文")
+            );
+        });
+    }
+}
+
+#[gpui_kit::test]
+async fn search_shortcut_uses_workspace_panel_and_accepts_continuous_input(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    cx.update(|cx| cx.bind_keys(key_bindings()));
+    let mut view = None;
+    let handle = cx.open_window(size(px(900.), px(600.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            let id = workspace.active_document_id();
+            workspace.set_document_value(id, "alpha alphabet", window, cx);
+        });
+        window.render_frame(cx);
+        window.press("secondary-f", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        assert!(
+            workspace
+                .search_session_for_test(workspace.active_document_id())
+                .unwrap()
+                .open,
+            "search shortcut must open the workspace panel, not the component overlay"
+        );
+    });
+    cx.update_window(handle.into(), |_, window, cx| window.input("alpha", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        assert_eq!(
+            workspace
+                .search_session_for_test(workspace.active_document_id())
+                .unwrap()
+                .query,
+            "alpha"
+        );
+    });
+    // Re-enter through the replacement shortcut, then clear and type Unicode.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.press("secondary-shift-f", cx);
+        window.press("secondary-a", cx);
+        window.input("中文", cx);
+        window.press("backspace", cx);
+        window.input("字", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        let id = workspace.active_document_id();
+        let session = workspace.search_session_for_test(id).unwrap();
+        assert!(session.open && session.replace_mode);
+        assert_eq!(session.query, "中字");
+        assert_eq!(
+            workspace.document_text(id, cx).as_deref(),
+            Some("alpha alphabet")
+        );
+    });
+}

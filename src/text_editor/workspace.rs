@@ -190,6 +190,9 @@ impl Workspace {
         let editor = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
                 .language(language)
+                // Search UI belongs to Workspace. Let shortcuts propagate to
+                // its handlers instead of opening a second component panel.
+                .searchable(false)
                 .folding(true);
             state.set_highlighter_factory(super::syntax::factory(), cx);
             state.default_value(text)
@@ -869,8 +872,7 @@ impl Workspace {
         let options = session.options;
         if options.mode == SearchMode::PlainText {
             editor.update(cx, |state, cx| {
-                // 借用编辑器内置搜索做匹配，随即关掉它的浮层。
-                state.open_search(session.replace_mode, cx);
+                // Update the matcher directly without opening a component overlay.
                 state.set_search_query(session.query.clone(), !options.case_sensitive, cx);
                 state.close_search(cx);
                 if forward {
@@ -936,7 +938,6 @@ impl Workspace {
         let text = editor_state.read(cx).value().to_string();
         if session.options.mode == SearchMode::PlainText {
             editor_state.update(cx, |state, cx| {
-                state.open_search(true, cx);
                 state.set_search_query(session.query.clone(), !session.options.case_sensitive, cx);
                 state.close_search(cx);
                 let _ = state.replace_current_search_match(&session.replacement, window, cx);
@@ -986,7 +987,6 @@ impl Workspace {
         let editor_state = document.editor.clone();
         if session.options.mode == SearchMode::PlainText {
             editor_state.update(cx, |state, cx| {
-                state.open_search(true, cx);
                 state.set_search_query(session.query.clone(), !session.options.case_sensitive, cx);
                 state.close_search(cx);
                 let _ = state.replace_all_search_matches(&session.replacement, window, cx);
@@ -1012,11 +1012,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((query, replacement, editor)) = self.document(id).map(|document| {
+        let Some((query, replacement)) = self.document(id).map(|document| {
             (
                 document.search.query.clone(),
                 document.search.replacement.clone(),
-                document.editor.clone(),
             )
         }) else {
             return;
@@ -1032,11 +1031,7 @@ impl Workspace {
             document.search.replace_mode = replace_mode;
             document.search.error = None;
         }
-        editor.update(cx, |state, cx| {
-            // 组件自带浮层只用来同步查询，界面由工作区面板负责。
-            state.open_search(replace_mode, cx);
-            state.close_search(cx);
-        });
+        self.refresh_search(id, cx);
         self.search_query
             .update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
