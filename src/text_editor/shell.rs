@@ -1,6 +1,9 @@
 //! Rueditor 应用壳：平台无关的快捷键和窗口启动配置。
 
-use super::editor::{self, FindNext, FindPrevious};
+use super::{
+    document::Encoding,
+    editor::{self, FindNext, FindPrevious},
+};
 use gpui_kit::component::input::{Replace, Search};
 use gpui_kit::*;
 
@@ -40,6 +43,14 @@ pub(super) fn app_menus() -> [Menu; 8] {
         Menu::new("文件").items([
             MenuItem::action("新建", editor::New),
             MenuItem::action("打开…", editor::Open),
+            MenuItem::submenu(Menu::new("以编码打开").items(Encoding::OPTIONS.iter().map(
+                |&encoding| {
+                    MenuItem::action(
+                        format!("{}…", encoding.label()),
+                        editor::OpenWithEncoding(encoding),
+                    )
+                },
+            ))),
             MenuItem::separator(),
             MenuItem::action("保存", editor::Save),
             MenuItem::action("另存为…", editor::SaveAs),

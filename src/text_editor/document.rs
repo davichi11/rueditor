@@ -1,4 +1,5 @@
 //! 文档模型：保存文件元数据与编辑修订，不复制 EditorState 的文本。
+pub(super) use super::encoding::Encoding;
 use super::file_io::FileFingerprint;
 use gpui_kit::component::input::EditorState;
 use gpui_kit::{Entity, SharedString};
@@ -15,15 +16,6 @@ pub(super) enum Newline {
     Lf,
     /// Windows 换行。只在写入磁盘时把内部 LF 转成 CRLF。
     Crlf,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-/// 文档的文本编码；当前支持 UTF-8 和 UTF-8 BOM。
-pub(super) enum Encoding {
-    /// 无 BOM 的 UTF-8。
-    Utf8,
-    /// 以 EF BB BF 开头的 UTF-8；正文解码时会去掉这三字节。
-    Utf8Bom,
 }
 
 /// 单个文档的显示和输入设置。修改这些项不会推进文档修订。

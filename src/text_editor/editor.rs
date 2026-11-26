@@ -1,7 +1,7 @@
 //! 编辑器共享能力：操作类型、语言识别和格式化工具。
 
-use super::document::{SearchMode, SearchOptions};
-use gpui_kit::actions;
+use super::document::{Encoding, SearchMode, SearchOptions};
+use gpui_kit::{Action, actions};
 use regex::{Regex, RegexBuilder};
 use std::ops::Range;
 use std::path::PathBuf;
@@ -88,6 +88,18 @@ actions!(
         ShowAbout
     ]
 );
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = text_editor, no_json)]
+pub(super) struct OpenWithEncoding(pub Encoding);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = text_editor, no_json)]
+pub(super) struct ReopenWithEncoding(pub Encoding);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = text_editor, no_json)]
+pub(super) struct SaveWithEncoding(pub Encoding);
 
 /// 语言标识和状态栏上的显示名。
 pub(super) const LANGUAGE_OPTIONS: &[(&str, &str)] = &[

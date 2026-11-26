@@ -7,6 +7,8 @@ default-run = "rueditor"
 description = "A lightweight native text editor built with GPUI Kit"
 
 [dependencies]
+chardetng = "1.0"
+encoding_rs = "0.8"
 tempfile = "3.27"
 gpui-kit = { version = "0.8.0", features = [
     "tree-sitter",

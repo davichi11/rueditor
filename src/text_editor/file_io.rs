@@ -1,4 +1,4 @@
-//! 文件 I/O 边界：只处理 UTF-8/BOM 和 LF/CRLF，保留明确的失败信息。
+//! 文件 I/O 边界：文本解码、换行规范化、指纹与原子保存。
 use super::document::{Encoding, Newline};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -28,32 +28,36 @@ pub(super) struct LoadedText {
 
 /// 读取路径上的字节并计算指纹。两次读取之间文件被替换时，调用方应视为已变化。
 pub(super) fn fingerprint(path: &Path) -> io::Result<FileFingerprint> {
-    let bytes = std::fs::read(path)?;
-    let metadata = std::fs::metadata(path)?;
-    let mut hasher = DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    Ok(FileFingerprint {
-        length: metadata.len(),
-        modified: metadata.modified().ok(),
-        content_hash: hasher.finish(),
-    })
+    read_snapshot(path).map(|(_, fingerprint)| fingerprint)
 }
 
-/// 读取文本文件，校验 UTF-8，并将 CRLF 规范化为编辑器内部的 LF。
-pub(super) fn load(path: &Path) -> io::Result<LoadedText> {
-    let bytes = std::fs::read(path)?;
-    let fingerprint = fingerprint(path)?;
-    let (encoding, body) = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        (Encoding::Utf8Bom, &bytes[3..])
-    } else {
-        (Encoding::Utf8, bytes.as_slice())
-    };
-    let text = String::from_utf8(body.to_vec()).map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("文件不是有效 UTF-8：{error}"),
-        )
-    })?;
+fn read_snapshot(path: &Path) -> io::Result<(Vec<u8>, FileFingerprint)> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let fingerprint = fingerprint_bytes(&bytes, file.metadata()?.modified().ok());
+    Ok((bytes, fingerprint))
+}
+
+fn fingerprint_bytes(bytes: &[u8], modified: Option<SystemTime>) -> FileFingerprint {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    FileFingerprint {
+        length: bytes.len() as u64,
+        modified,
+        content_hash: hasher.finish(),
+    }
+}
+
+/// 按指定或自动识别的编码读取文本，并将 CRLF 规范化为编辑器内部的 LF。
+pub(super) fn load_with_encoding(
+    path: &Path,
+    requested: Option<Encoding>,
+) -> io::Result<LoadedText> {
+    let (bytes, fingerprint) = read_snapshot(path)?;
+    let (encoding, text) = Encoding::decode(&bytes, requested)?;
     // 去掉成对 CRLF 后仍有 CR，或同一文件里同时出现 CRLF 和单独 LF，都拒绝读取。
     let unpaired = text.replace("\r\n", "");
     if unpaired.contains('\r') || (text.contains("\r\n") && unpaired.contains('\n')) {
@@ -76,6 +80,11 @@ pub(super) fn load(path: &Path) -> io::Result<LoadedText> {
     })
 }
 
+#[cfg(test)]
+pub(super) fn load(path: &Path) -> io::Result<LoadedText> {
+    load_with_encoding(path, None)
+}
+
 /// 磁盘内容仍等于 `expected` 时才写入。
 ///
 /// `expected` 为 `None` 表示新文件，不做外部修改检查。
@@ -84,7 +93,7 @@ pub(super) fn save_if_unchanged(
     path: &Path,
     bytes: &[u8],
     expected: Option<&FileFingerprint>,
-) -> io::Result<PathBuf> {
+) -> io::Result<(PathBuf, FileFingerprint)> {
     if let Some(expected) = expected {
         let unchanged = fingerprint(path)
             .map(|actual| actual == *expected)
@@ -99,9 +108,8 @@ pub(super) fn save_if_unchanged(
     save(path, bytes)
 }
 
-/// 同目录原子替换。解析符号链接后写入目标，拒绝只读文件。
 /// 将字节通过同目录临时文件原子替换写入目标路径。
-pub(super) fn save(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
+fn save(path: &Path, bytes: &[u8]) -> io::Result<(PathBuf, FileFingerprint)> {
     use std::io::Write;
     // 已有符号链接时写到解析后的目标，避免把链接本身替换成普通文件。
     let target = match std::fs::symlink_metadata(path) {
@@ -130,39 +138,19 @@ pub(super) fn save(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
         temp.as_file().set_permissions(meta.permissions())?;
     }
     temp.as_file().sync_all()?;
+    let modified = temp.as_file().metadata()?.modified().ok();
     temp.persist(&target).map_err(|e| e.error)?;
-    Ok(target)
+    Ok((target, fingerprint_bytes(bytes, modified)))
 }
 
 /// 按文档编码和换行设置生成最终写入磁盘的字节序列。
-pub(super) fn bytes_for_save(text: &str, encoding: Encoding, newline: Newline) -> Vec<u8> {
-    let normalized = match newline {
-        Newline::Lf => text.to_owned(),
-        Newline::Crlf => text.replace('\n', "\r\n"),
-    };
-    let mut bytes = Vec::with_capacity(normalized.len() + 3);
-    if encoding == Encoding::Utf8Bom {
-        bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
-    }
-    bytes.extend_from_slice(normalized.as_bytes());
-    bytes
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn preserves_bom_and_newline_on_save() {
-        assert_eq!(
-            bytes_for_save("a\nb", Encoding::Utf8Bom, Newline::Crlf),
-            b"\xEF\xBB\xBFa\r\nb"
-        );
-    }
-    #[test]
-    fn rejects_invalid_utf8() {
-        let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), [0xff, 0xfe]).unwrap();
-        let result = load(file.path());
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+pub(super) fn bytes_for_save(
+    text: &str,
+    encoding: Encoding,
+    newline: Newline,
+) -> io::Result<Vec<u8>> {
+    match newline {
+        Newline::Lf => encoding.encode(text),
+        Newline::Crlf => encoding.encode(&text.replace('\n', "\r\n")),
     }
 }

@@ -14,6 +14,8 @@ use super::super::editor::{
 use super::super::file_io::{bytes_for_save, load, save_if_unchanged};
 use super::super::shell::key_bindings;
 use super::super::workspace::Workspace;
+#[cfg(debug_assertions)]
+use gpui_kit::VisualTestContext;
 use gpui_kit::component::Root;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{
@@ -394,7 +396,7 @@ fn text_command_shortcuts_are_registered_with_expected_modifiers() {
 
 #[test]
 fn utf8_bom_and_crlf_round_trip() {
-    let bytes = bytes_for_save("第一行\n第二行", Encoding::Utf8Bom, Newline::Crlf);
+    let bytes = bytes_for_save("第一行\n第二行", Encoding::Utf8Bom, Newline::Crlf).unwrap();
     assert_eq!(&bytes[..3], &[0xef, 0xbb, 0xbf]);
     assert!(bytes.windows(2).any(|pair| pair == b"\r\n"));
 }
@@ -429,9 +431,10 @@ fn atomically_saves_new_file_with_requested_format() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("new.txt");
 
-    let saved_path = super::super::file_io::save(
+    let (saved_path, _) = save_if_unchanged(
         &path,
-        &bytes_for_save("first\nsecond", Encoding::Utf8Bom, Newline::Crlf),
+        &bytes_for_save("first\nsecond", Encoding::Utf8Bom, Newline::Crlf).unwrap(),
+        None,
     )
     .unwrap();
 
@@ -440,11 +443,219 @@ fn atomically_saves_new_file_with_requested_format() {
 }
 
 #[test]
-fn invalid_utf8_is_rejected_without_replacement() {
+fn malformed_bom_and_binary_are_rejected() {
     let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), [0xff, 0xfe]).unwrap();
-    let result = load(file.path());
-    assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidData);
+    for bytes in [
+        b"\xef\xbb\xbf\xff\xfd".as_slice(),
+        b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR",
+    ] {
+        std::fs::write(file.path(), bytes).unwrap();
+        assert_eq!(
+            load(file.path()).unwrap_err().kind(),
+            ErrorKind::InvalidData
+        );
+    }
+}
+
+#[test]
+fn detects_utf16_bom_and_normalizes_crlf() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    for bytes in [
+        b"\xff\xfe-N\r\0\n\0=\xd8\0\xde".as_slice(),
+        b"\xfe\xffN-\0\r\0\n\xd8=\xde\0".as_slice(),
+    ] {
+        std::fs::write(file.path(), bytes).unwrap();
+        let loaded = load(file.path()).unwrap();
+        assert_eq!(loaded.text, "中\n😀");
+        assert_eq!(loaded.newline, Newline::Crlf);
+        assert_eq!(
+            bytes_for_save(&loaded.text, loaded.encoding, loaded.newline).unwrap(),
+            bytes
+        );
+    }
+}
+
+#[test]
+fn legacy_encodings_round_trip_without_silent_character_replacement() {
+    use super::super::file_io::load_with_encoding;
+
+    let file = tempfile::NamedTempFile::new().unwrap();
+    for (codec, bytes, text) in [
+        (encoding_rs::GBK, &b"\xd6\xd0\xce\xc4\r\n"[..], "中文\n"),
+        (encoding_rs::BIG5, &b"\xa4\xa4\xa4\xe5\r\n"[..], "中文\n"),
+        (
+            encoding_rs::SHIFT_JIS,
+            &b"\x93\xfa\x96\x7b\r\n"[..],
+            "日本\n",
+        ),
+        (encoding_rs::WINDOWS_1252, &b"caf\xe9\r\n"[..], "café\n"),
+    ] {
+        let encoding = Encoding::Legacy(codec);
+        std::fs::write(file.path(), bytes).unwrap();
+        let loaded = load_with_encoding(file.path(), Some(encoding)).unwrap();
+        assert_eq!(loaded.text, text);
+        assert_eq!(loaded.encoding, encoding);
+        assert_eq!(loaded.newline, Newline::Crlf);
+        assert_eq!(
+            bytes_for_save(text, encoding, loaded.newline).unwrap(),
+            bytes
+        );
+        assert!(bytes_for_save("😀", encoding, Newline::Lf).is_err());
+    }
+}
+
+#[test]
+fn automatically_detects_multiple_text_encodings_without_bom() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    for (encoding, text) in [
+        (Encoding::Utf16Le, "hello 中文\n"),
+        (Encoding::Utf16Be, "hello 中文\n"),
+        (Encoding::Legacy(encoding_rs::GBK), "中文\n"),
+        (
+            Encoding::Legacy(encoding_rs::GB18030),
+            "这是一个字符编码测试。😀\n",
+        ),
+        (
+            Encoding::Legacy(encoding_rs::BIG5),
+            "這是一個繁體中文編碼測試。\n",
+        ),
+        (
+            Encoding::Legacy(encoding_rs::SHIFT_JIS),
+            "これは日本語の文字コードを確認するための文章です。\n",
+        ),
+        (
+            Encoding::Legacy(encoding_rs::ISO_2022_JP),
+            "日本語の文章です。\n",
+        ),
+        (
+            Encoding::Legacy(encoding_rs::WINDOWS_1252),
+            "Le café était fermé à Noël.\n",
+        ),
+    ] {
+        let bytes = bytes_for_save(text, encoding, Newline::Crlf).unwrap();
+        std::fs::write(file.path(), &bytes).unwrap();
+        let loaded = load(file.path()).unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
+        assert_eq!(loaded.text, text, "{encoding:?}");
+        assert_eq!(loaded.encoding, encoding);
+        assert_eq!(
+            bytes_for_save(&loaded.text, loaded.encoding, loaded.newline).unwrap(),
+            bytes
+        );
+    }
+}
+
+#[gpui_kit::test]
+#[cfg(debug_assertions)]
+async fn encoding_status_menu_saves_current_file_with_utf8_bom(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), b"hello\r\n").unwrap();
+    let path = file.path().to_path_buf();
+    let handle = cx.open_window(size(px(900.), px(600.)), |window, cx| {
+        let workspace = cx.new(|cx| {
+            let mut workspace = Workspace::new(window, cx);
+            workspace.open_paths(vec![path], window, cx);
+            workspace
+        });
+        Root::new(workspace, window, cx)
+    });
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    visual.update(|window, cx| window.render_frame(cx));
+    let trigger = visual.debug_bounds("document-encoding").unwrap();
+    visual.simulate_click(trigger.center(), Default::default());
+    visual.simulate_keystrokes("down down left down enter");
+    visual.run_until_parked();
+    assert_eq!(
+        std::fs::read(file.path()).unwrap(),
+        b"\xef\xbb\xbfhello\r\n"
+    );
+}
+
+#[gpui_kit::test]
+async fn encoding_commands_preserve_edits_until_reload_or_save_succeeds(cx: &mut TestAppContext) {
+    use super::super::editor::{OpenWithEncoding, ReopenWithEncoding, Save, SaveWithEncoding};
+
+    cx.update(gpui_kit::init);
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), b"\xd6\xd0\xce\xc4\r\n").unwrap();
+    let path = file.path().to_path_buf();
+    let mut view = None;
+    let handle = cx.open_window(size(px(900.), px(600.)), |window, cx| {
+        let workspace = cx.new(|cx| Workspace::new(window, cx));
+        view = Some(workspace.clone());
+        Root::new(workspace, window, cx)
+    });
+    let view = view.unwrap();
+    let dispatch = |cx: &mut TestAppContext, action: Box<dyn gpui_kit::Action>| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.dispatch_action(action, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    let gbk = Encoding::Legacy(encoding_rs::GBK);
+    dispatch(cx, Box::new(OpenWithEncoding(gbk)));
+    cx.simulate_path_prompt_response(move |_| Some(vec![path]));
+    cx.run_until_parked();
+    let id = cx.update(|cx| {
+        let workspace = view.read(cx);
+        let id = workspace.active_document_id();
+        assert_eq!(workspace.document_text(id, cx).as_deref(), Some("中文\n"));
+        id
+    });
+    let edit = |cx: &mut TestAppContext, text| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |workspace, cx| {
+                workspace.set_document_value(id, text, window, cx)
+            });
+        })
+        .unwrap();
+    };
+    edit(cx, "中文修改\n");
+    dispatch(cx, Box::new(Save));
+    let updated = b"\xd6\xd0\xce\xc4\xd0\xde\xb8\xc4\r\n";
+    assert_eq!(std::fs::read(file.path()).unwrap(), updated);
+
+    edit(cx, "未保存😀");
+    let assert_edits_preserved = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let workspace = view.read(cx);
+            assert!(workspace.document_is_dirty(id));
+            assert_eq!(workspace.document_text(id, cx).as_deref(), Some("未保存😀"));
+        });
+        assert_eq!(std::fs::read(file.path()).unwrap(), updated);
+    };
+    dispatch(cx, Box::new(SaveWithEncoding(gbk)));
+    assert_edits_preserved(cx);
+
+    for (encoding, answer) in [(gbk, "取消"), (Encoding::Utf8, "放弃修改并重新打开")] {
+        dispatch(cx, Box::new(ReopenWithEncoding(encoding)));
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer(answer);
+        cx.run_until_parked();
+        assert_edits_preserved(cx);
+    }
+    dispatch(cx, Box::new(ReopenWithEncoding(gbk)));
+    cx.simulate_prompt_answer("放弃修改并重新打开");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = view.read(cx);
+        assert_eq!(workspace.active_document_id(), id);
+        assert_eq!(
+            workspace.document_text(id, cx).as_deref(),
+            Some("中文修改\n")
+        );
+        assert!(!workspace.document_is_dirty(id));
+    });
+    assert_eq!(std::fs::read(file.path()).unwrap(), updated);
+
+    dispatch(cx, Box::new(SaveWithEncoding(Encoding::Utf8)));
+    assert_eq!(
+        std::fs::read(file.path()).unwrap(),
+        "中文修改\r\n".as_bytes()
+    );
 }
 
 #[test]
@@ -1136,10 +1347,13 @@ async fn document_settings_are_independent_and_do_not_mark_dirty(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
-async fn opens_selected_crlf_file_into_current_document(cx: &mut TestAppContext) {
+async fn ordinary_open_detects_gbk_and_save_preserves_encoding(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), "第一行\r\n第二行".as_bytes()).unwrap();
+    let source = "这是一个字符编码测试。\n第二行\n";
+    let encoding = Encoding::Legacy(encoding_rs::GBK);
+    let original = bytes_for_save(source, encoding, Newline::Crlf).unwrap();
+    std::fs::write(file.path(), &original).unwrap();
     let path = file.path().to_path_buf();
     let mut view = None;
     let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
@@ -1161,16 +1375,29 @@ async fn opens_selected_crlf_file_into_current_document(cx: &mut TestAppContext)
     cx.update(|cx| {
         let workspace = view.read(cx);
         let id = workspace.active_document_id();
-        assert_eq!(
-            workspace.document_text(id, cx),
-            Some("第一行\n第二行".to_string())
-        );
+        assert_eq!(workspace.document_text(id, cx), Some(source.to_string()));
         assert_eq!(
             workspace.active_document_path(),
             Some(file.path().to_path_buf())
         );
         assert!(!workspace.document_is_dirty(id));
     });
+    assert_eq!(std::fs::read(file.path()).unwrap(), original);
+
+    let edited = "这是普通保存写入的中文。\n";
+    cx.update_window(handle.into(), |_, window, cx| {
+        view.update(cx, |workspace, cx| {
+            workspace.set_document_value(workspace.active_document_id(), edited, window, cx);
+        });
+        window.render_frame(cx);
+        window.dispatch_action(Box::new(super::super::editor::Save), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read(file.path()).unwrap(),
+        bytes_for_save(edited, encoding, Newline::Crlf).unwrap()
+    );
 }
 
 #[gpui_kit::test]
@@ -1284,10 +1511,12 @@ async fn opening_multiple_files_installs_each_file_as_a_tab(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
-async fn dropping_a_file_on_the_window_opens_it_in_a_tab(cx: &mut TestAppContext) {
+async fn dropping_a_big5_file_detects_its_encoding_and_opens_a_tab(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), "dropped file").unwrap();
+    let source = "這是一個繁體中文編碼測試。\n";
+    let bytes = bytes_for_save(source, Encoding::Legacy(encoding_rs::BIG5), Newline::Lf).unwrap();
+    std::fs::write(file.path(), bytes).unwrap();
     let path = file.path().to_path_buf();
     let mut view = None;
     let handle = cx.open_window(size(px(720.), px(480.)), |window, cx| {
@@ -1321,10 +1550,7 @@ async fn dropping_a_file_on_the_window_opens_it_in_a_tab(cx: &mut TestAppContext
     cx.update(|cx| {
         let workspace = view.read(cx);
         let id = workspace.active_document_id();
-        assert_eq!(
-            workspace.document_text(id, cx),
-            Some("dropped file".to_string())
-        );
+        assert_eq!(workspace.document_text(id, cx), Some(source.to_string()));
         assert_eq!(workspace.active_document_path(), Some(path));
     });
 }

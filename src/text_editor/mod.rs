@@ -4,6 +4,7 @@ mod appearance;
 mod chrome;
 mod document;
 mod editor;
+mod encoding;
 mod file_io;
 mod languages;
 #[cfg(test)]

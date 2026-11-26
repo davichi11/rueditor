@@ -1,11 +1,16 @@
 // 工作区的标签栏、工具栏、正文与状态栏。
-use super::super::{chrome, document::Document, editor};
+use super::super::{
+    chrome,
+    document::{Document, Encoding},
+    editor,
+};
 use super::Workspace;
 use gpui_kit::base::Selectable;
 use gpui_kit::component::{
     ActiveTheme, Disableable, IconName, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     input::Editor,
+    menu::{DropdownMenu, PopupMenu},
     resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
     tab::{Tab, TabBar},
@@ -221,6 +226,9 @@ impl Workspace {
         StatusBar::new()
             .flex_shrink_0()
             .px_3()
+            .when_some(active, |bar, document| {
+                bar.right(self.render_encoding_menu(document, cx))
+            })
             .right(active.map(chrome::metadata).unwrap_or_default())
             .left(if let Some(position) = position {
                 format!("行 {}，列 {}", position.line + 1, position.character + 1)
@@ -236,6 +244,42 @@ impl Workspace {
             } else {
                 self.message.clone()
             })
+    }
+
+    fn render_encoding_menu(&self, document: &Document, cx: &App) -> impl IntoElement {
+        let current = document.encoding;
+        let has_path = document.path.is_some();
+        let action_context = document.editor.read(cx).focus_handle(cx);
+        div().debug_selector(|| "document-encoding".into()).child(
+            Button::new(("document-encoding", document.id.0))
+                .label(current.label())
+                .accessibility_label(format!("文档编码：{}", current.label()))
+                .tooltip("更改文档编码")
+                .ghost()
+                .xsmall()
+                .disabled(self.is_busy())
+                .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, cx| {
+                    menu.action_context(action_context.clone())
+                        .when(has_path, |menu| {
+                            menu.submenu("以编码重新打开", window, cx, move |menu, _, _| {
+                                encoding_items(menu, Some(current), |encoding| {
+                                    Box::new(editor::ReopenWithEncoding(encoding))
+                                })
+                            })
+                        })
+                        .submenu("以编码保存", window, cx, move |menu, _, _| {
+                            encoding_items(menu, Some(current), |encoding| {
+                                Box::new(editor::SaveWithEncoding(encoding))
+                            })
+                        })
+                        .separator()
+                        .submenu("以编码打开", window, cx, |menu, _, _| {
+                            encoding_items(menu, None, |encoding| {
+                                Box::new(editor::OpenWithEncoding(encoding))
+                            })
+                        })
+                }),
+        )
     }
 
     /// 构造 Markdown 预览面板。
@@ -274,4 +318,23 @@ impl Workspace {
             .test_support()
             .into_any_element()
     }
+}
+
+fn encoding_items(
+    menu: PopupMenu,
+    current: Option<Encoding>,
+    action: impl Fn(Encoding) -> Box<dyn Action>,
+) -> PopupMenu {
+    let additional = current.filter(|encoding| !Encoding::OPTIONS.contains(encoding));
+    Encoding::OPTIONS
+        .iter()
+        .copied()
+        .chain(additional)
+        .fold(menu, |menu, encoding| {
+            menu.menu_with_check(
+                encoding.label(),
+                Some(encoding) == current,
+                action(encoding),
+            )
+        })
 }

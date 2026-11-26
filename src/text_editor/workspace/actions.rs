@@ -30,6 +30,21 @@ impl Workspace {
             }
         }))
         .on_action(cx.listener(|this, _: &Open, window, cx| this.open(cx, window)))
+        .on_action(
+            cx.listener(|this, action: &editor::OpenWithEncoding, window, cx| {
+                this.open_with_encoding(Some(action.0), window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, action: &editor::ReopenWithEncoding, window, cx| {
+                this.reopen_with_encoding(this.active_id(), action.0, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, action: &editor::SaveWithEncoding, window, cx| {
+                this.save_with_encoding(this.active_id(), action.0, window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, _: &Save, window, cx| {
             let id = this.active_id();
             this.save(id, false, None, window, cx);

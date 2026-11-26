@@ -4,6 +4,7 @@ use super::super::{
     file_io,
 };
 use super::Workspace;
+use gpui_kit::component::input::FoldRange;
 use gpui_kit::*;
 use std::path::{Path, PathBuf};
 
@@ -82,6 +83,15 @@ impl Workspace {
 
     /// 打开文件选择器，并将用户选中的多个文件逐个后台加载到标签中。
     pub(super) fn open(&mut self, cx: &mut Context<Self>, window: &mut Window) {
+        self.open_with_encoding(None, window, cx);
+    }
+
+    pub(super) fn open_with_encoding(
+        &mut self,
+        encoding: Option<Encoding>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_busy() {
             return;
         }
@@ -115,10 +125,114 @@ impl Workspace {
                     cx.notify();
                 }
             });
-            iter_and_load_files(paths, request_id, this, cx);
+            iter_and_load_files(paths, encoding, request_id, this, cx);
         })
         .detach();
         cx.notify();
+    }
+
+    pub(super) fn reopen_with_encoding(
+        &mut self,
+        id: DocumentId,
+        encoding: Encoding,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_busy() {
+            return;
+        }
+        let Some(document) = self.document(id) else {
+            return;
+        };
+        let Some(path) = document.path.clone() else {
+            self.message = "请先保存文档，再以编码重新打开".into();
+            cx.notify();
+            return;
+        };
+        let revision = document.revision;
+        let dirty_title = document.is_dirty().then(|| document.title.clone());
+        self.loading = true;
+        let prompt = dirty_title.map(|title| {
+            window.prompt(
+                PromptLevel::Warning,
+                "放弃修改并重新打开？",
+                Some(&format!(
+                    "将以 {} 重新打开「{title}」。成功后，未保存的修改将被丢弃。",
+                    encoding.label()
+                )),
+                &[
+                    PromptButton::cancel("取消"),
+                    PromptButton::new("放弃修改并重新打开"),
+                ],
+                cx,
+            )
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let confirmed = match prompt {
+                Some(prompt) => matches!(prompt.await, Ok(1)),
+                None => true,
+            };
+            let result = if confirmed {
+                Some(
+                    cx.background_spawn(async move {
+                        file_io::load_with_encoding(&path, Some(encoding))
+                    })
+                    .await,
+                )
+            } else {
+                None
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.loading = false;
+                if let Some(result) = result {
+                    match result {
+                        Ok(loaded) => this.install_reopened(id, revision, loaded, window, cx),
+                        Err(error) => this.message = format!("重新打开失败：{error}").into(),
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn install_reopened(
+        &mut self,
+        id: DocumentId,
+        revision: u64,
+        loaded: file_io::LoadedText,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(document) = self.document_mut(id) else {
+            return;
+        };
+        if document.revision != revision {
+            self.message = "重新打开期间文档发生了变化，已保留当前内容".into();
+            return;
+        }
+        document.encoding = loaded.encoding;
+        document.newline = loaded.newline;
+        document.disk_fingerprint = Some(loaded.fingerprint);
+        document.revision += 1;
+        document.saved_revision = document.revision;
+        let yaml = document.language == "yaml";
+        document.editor.update(cx, |state, cx| {
+            state.set_value(loaded.text, window, cx);
+            if yaml {
+                let ranges = super::editor::yaml_fold_ranges(&state.value())
+                    .into_iter()
+                    .map(|(start, end)| FoldRange::new(start, end))
+                    .collect();
+                state.apply_highlighter_fold_candidates(ranges, cx);
+            }
+        });
+        self.refresh_search(id, cx);
+        if self.active_id() == id {
+            self.focus_document(id, window, cx);
+        }
+        self.message = format!("已用 {} 重新打开", loaded.encoding.label()).into();
     }
 
     /// 把单个文件的读取结果装进工作区，失败时只更新状态栏。
@@ -152,6 +266,30 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.save_document(id, save_as, after, None, window, cx);
+    }
+
+    pub(super) fn save_with_encoding(
+        &mut self,
+        id: DocumentId,
+        encoding: Encoding,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_busy() {
+            self.save_document(id, false, None, Some(encoding), window, cx);
+        }
+    }
+
+    fn save_document(
+        &mut self,
+        id: DocumentId,
+        save_as: bool,
+        after: Option<AfterSave>,
+        encoding: Option<Encoding>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.loading || self.prompting || self.saving.contains(&id) {
             return;
         }
@@ -161,7 +299,7 @@ impl Workspace {
         // 记下发起保存时的修订。异步返回后若修订已前进，就不能当成已保存。
         let revision = document.revision;
         let text = document.editor.read(cx).value().to_string();
-        let encoding = document.encoding;
+        let encoding = encoding.unwrap_or(document.encoding);
         let newline = document.newline;
         let path = if save_as { None } else { document.path.clone() };
         let title = document.title.clone();
@@ -210,11 +348,8 @@ impl Workspace {
                             .ok()
                             .flatten();
                         cx.background_spawn(async move {
-                            file_io::save_if_unchanged(
-                                &path,
-                                &file_io::bytes_for_save(&text, encoding, newline),
-                                expected.as_ref(),
-                            )
+                            let bytes = file_io::bytes_for_save(&text, encoding, newline)?;
+                            file_io::save_if_unchanged(&path, &bytes, expected.as_ref())
                         })
                         .await
                     },
@@ -225,7 +360,7 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.saving.remove(&id);
                 match result {
-                    Some(Ok(path)) => {
+                    Some(Ok((path, fingerprint))) => {
                         let can_continue = if let Some(document) = this.document_mut(id) {
                             document.title = path
                                 .file_name()
@@ -234,11 +369,9 @@ impl Workspace {
                                 .into_owned()
                                 .into();
                             document.path = Some(path);
+                            document.encoding = encoding;
                             document.saved_revision = revision;
-                            document.disk_fingerprint = file_io::fingerprint(
-                                document.path.as_deref().expect("saved path must exist"),
-                            )
-                            .ok();
+                            document.disk_fingerprint = Some(fingerprint);
                             // 保存期间又编辑过时修订已经前进，不能接着关闭或退出。
                             !document.is_dirty()
                         } else {
@@ -434,8 +567,7 @@ impl Workspace {
         self.loading = true;
         self.pending_loads = paths.len();
         cx.spawn_in(window, async move |this, cx| {
-            // 遍历 paths 中的每个路径，并调用 file_io::load 函数加载文件。
-            iter_and_load_files(paths, request_id, this, cx);
+            iter_and_load_files(paths, None, request_id, this, cx);
         })
         .detach();
         cx.notify();
@@ -444,6 +576,7 @@ impl Workspace {
 
 fn iter_and_load_files(
     paths: Vec<PathBuf>,
+    encoding: Option<Encoding>,
     request_id: u64,
     this: WeakEntity<Workspace>,
     cx: &mut AsyncWindowContext,
@@ -451,7 +584,7 @@ fn iter_and_load_files(
     for path in paths {
         let weak = this.clone();
         let task = cx.background_spawn(async move {
-            let result = file_io::load(&path);
+            let result = file_io::load_with_encoding(&path, encoding);
             (path, result)
         });
         cx.spawn(async move |cx| {
